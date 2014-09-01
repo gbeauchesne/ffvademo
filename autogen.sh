@@ -15,6 +15,19 @@ cd "$srcdir"
 
 mkdir -p m4
 
+GIT=`which git`
+if test -z "$GIT"; then
+    echo "*** No git found ***"
+    exit 1
+else
+    submodule_init="no"
+    [ -f ext/ffmpeg/upstream/configure ] || submodule_init="yes"
+    if test "$submodule_init" = "yes"; then
+        $GIT submodule init
+    fi
+    $GIT submodule update
+fi
+
 AUTORECONF=`which autoreconf`
 if test -z "$AUTORECONF"; then
     echo "*** No autoreconf found ***"

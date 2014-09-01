@@ -5,8 +5,15 @@ noinst_LTLIBRARIES	= libffva.la
 # --- FFmpeg decoder module                                                 ---
 # -----------------------------------------------------------------------------
 
+if ENABLE_BUILTIN_FFMPEG
+FFMPEG_CFLAGS	= \
+	-I$(top_srcdir)/ext/ffmpeg/upstream \
+	-I$(top_builddir)/ext/ffmpeg/objs
+FFMPEG_LIBS	= $(top_builddir)/ext/ffmpeg/libffva_ffmpeg.la
+else
 FFMPEG_CFLAGS	= $(LIBAVUTIL_CFLAGS) $(LIBAVFORMAT_CFLAGS) $(LIBAVCODEC_CFLAGS)
 FFMPEG_LIBS	= $(LIBAVUTIL_LIBS) $(LIBAVFORMAT_LIBS) $(LIBAVCODEC_LIBS)
+endif
 
 libffva_cflags = \
 	$(FFMPEG_CFLAGS)	\

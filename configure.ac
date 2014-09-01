@@ -9,6 +9,9 @@ m4_if(ffva_pre_version, [0], [], [
 m4_append([ffva_version], ffva_pre_version, [.pre])
 ])
 
+# Configure defaults
+m4_define([default_builtin_ffmpeg],     [yes])
+
 # FFmpeg version number
 m4_define([libavutil_version],          [51.22.1])
 m4_define([libavformat_version],        [53.21.1])
@@ -52,10 +55,27 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])], [
   AC_SUBST(AM_DEFAULT_VERBOSITY)
 ])
 
+dnl Configure options
+AC_ARG_ENABLE([builtin-ffmpeg],
+    AS_HELP_STRING([--enable-builtin-ffmpeg],
+        [build built-in FFmpeg module @<:@default=default_builtin_ffmpeg@:>@]),
+    [], [enable_builtin_ffmpeg=default_builtin_ffmpeg])
+
+dnl Resolve dependencies
+if test "$enable_builtin_ffmpeg" = "yes"; then
+    needs_yasm="yes"
+fi
+
 dnl Check for tools
 AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_CXX
+
+AC_ARG_VAR([YASM], [Path to yasm program, if any])
+AC_PATH_PROG([YASM], [yasm])
+if test "$needs_yasm" = "yes" -a -z "$YASM"; then
+    AC_MSG_ERROR([yasm is needed to build FFmpeg sources])
+fi
 
 AC_C_BIGENDIAN
 AC_CHECK_LIB([m], [log10])
@@ -132,10 +152,8 @@ dnl ---------------------------------------------------------------------------
 dnl -- FFmpeg                                                                --
 dnl ---------------------------------------------------------------------------
 
-enable_ffmpeg="yes"
-
 dnl Check for libavutil
-if test "$enable_ffmpeg" = "yes"; then
+if test "$enable_builtin_ffmpeg" != "yes"; then
     PKG_CHECK_MODULES([LIBAVUTIL], [libavutil >= libavutil_version])
 
     saved_CPPFLAGS="$CPPFLAGS"
@@ -146,7 +164,7 @@ if test "$enable_ffmpeg" = "yes"; then
 fi
 
 dnl Check for libavformat
-if test "$enable_ffmpeg" = "yes"; then
+if test "$enable_builtin_ffmpeg" != "yes"; then
     PKG_CHECK_MODULES([LIBAVFORMAT], [libavformat >= libavformat_version])
 
     saved_CPPFLAGS="$CPPFLAGS"
@@ -157,7 +175,7 @@ if test "$enable_ffmpeg" = "yes"; then
 fi
 
 dnl Check for libavcodec
-if test "$enable_ffmpeg" = "yes"; then
+if test "$enable_builtin_ffmpeg" != "yes"; then
     PKG_CHECK_MODULES([LIBAVCODEC], [libavcodec >= libavcodec_version])
 
     saved_CPPFLAGS="$CPPFLAGS"
@@ -171,8 +189,12 @@ dnl ---------------------------------------------------------------------------
 dnl -- Generate files and summary                                            --
 dnl ---------------------------------------------------------------------------
 
+AM_CONDITIONAL([ENABLE_BUILTIN_FFMPEG], [test "$enable_builtin_ffmpeg" = "yes"])
+
 AC_CONFIG_FILES([
     Makefile
+    ext/Makefile
+    ext/ffmpeg/Makefile
     src/Makefile
 ])
 AC_OUTPUT
