@@ -1,0 +1,49 @@
+  FFmpeg/vaapi Sample Player (ffvademo)
+
+  Copyright (C) 2014 Intel Corporation
+    Author: Gwenole Beauchesne <gwenole.beauchesne@intel.com>
+
+
+License
+-------
+
+The FFmpeg/vaapi Sample Player (ffvademo) and its associated helper
+library are available available under the terms of the GNU Lesser
+General Public License v2.1+
+
+
+Overview
+--------
+
+This project consists in a simple FFmpeg/vaapi based video player, and
+an associated helper library, that demonstrate how to use FFmpeg with
+Video Acceleration (VA) APIs.
+
+
+Features
+--------
+
+  * FFmpeg decoder with VA-API support
+  * Native X11 renderer through vaPutSurface()
+
+Non-goals
+
+  * A full-blown player supporting every possible codec
+  * A player that supports audio decoding
+  * A player that supports software decoding
+
+
+Requirements
+------------
+
+Software requirements
+
+  * VA-API
+  * FFmpeg (>= 2.1)
+
+
+Usage
+-----
+
+  * Play an H.264 video with an MP4 container
+  $ ffvademo /path/to/video.mp4
