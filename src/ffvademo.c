@@ -150,10 +150,22 @@ static int
 app_render_frame(App *app, FFVADecoderFrame *dec_frame)
 {
     FFVASurface * const s = dec_frame->surface;
+    const VARectangle *rect;
+    VARectangle tmp_rect;
     uint32_t flags;
 
+    if (dec_frame->has_crop_rect)
+        rect = &dec_frame->crop_rect;
+    else {
+        tmp_rect.x = 0;
+        tmp_rect.y = 0;
+        tmp_rect.width = s->width;
+        tmp_rect.height = s->height;
+        rect = &tmp_rect;
+    }
+
     flags = 0;
-    if (!app_render_surface(app, s, NULL, flags))
+    if (!app_render_surface(app, s, rect, flags))
         return AVERROR_UNKNOWN;
     return 0;
 }

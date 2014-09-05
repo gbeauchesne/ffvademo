@@ -43,6 +43,8 @@ struct ffva_decoder_info_s {
 struct ffva_decoder_frame_s {
     AVFrame *frame;
     FFVASurface *surface;
+    VARectangle crop_rect;
+    bool has_crop_rect;
 };
 
 /** Creates a new decoder instance */

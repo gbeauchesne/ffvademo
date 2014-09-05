@@ -603,11 +603,22 @@ static int
 handle_frame(FFVADecoder *dec, AVFrame *frame)
 {
     FFVADecoderFrame * const dec_frame = &dec->decoded_frame;
+    VARectangle * const crop_rect = &dec_frame->crop_rect;
+    int data_offset;
 
     dec_frame->frame = frame;
     dec_frame->surface = vaapi_get_frame_surface(dec->avctx, frame);
     if (!dec_frame->surface)
         return AVERROR(EFAULT);
+
+    data_offset = frame->data[0] - frame->data[3];
+    dec_frame->has_crop_rect = data_offset > 0   ||
+        frame->width  != dec->avctx->coded_width ||
+        frame->height != dec->avctx->coded_height;
+    crop_rect->x = data_offset % frame->linesize[0];
+    crop_rect->y = data_offset / frame->linesize[0];
+    crop_rect->width = frame->width;
+    crop_rect->height = frame->height;
     return 0;
 }
 
