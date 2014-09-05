@@ -26,10 +26,23 @@
 #include <libavutil/opt.h>
 #include "ffvadisplay.h"
 #include "ffvadecoder.h"
+#include "ffvarenderer.h"
 #include "ffmpeg_utils.h"
+
+#if USE_X11
+# include "ffvarenderer_x11.h"
+#endif
+
+// Default window size
+#define DEFAULT_WIDTH  640
+#define DEFAULT_HEIGHT 480
+
+// Default renderer
+#define DEFAULT_RENDERER FFVA_RENDERER_TYPE_X11
 
 typedef struct {
     char *filename;
+    FFVARendererType renderer_type;
 } Options;
 
 typedef struct {
@@ -38,12 +51,20 @@ typedef struct {
     FFVADisplay *display;
     VADisplay va_display;
     FFVADecoder *decoder;
+    FFVARenderer *renderer;
+    uint32_t renderer_width;
+    uint32_t renderer_height;
 } App;
 
 #define OFFSET(x) offsetof(App, options.x)
 static const AVOption app_options[] = {
     { "filename", "path to video file to decode", OFFSET(filename),
       AV_OPT_TYPE_STRING, },
+    { "renderer", "renderer type to use", OFFSET(renderer_type),
+      AV_OPT_TYPE_FLAGS, { .i64 = DEFAULT_RENDERER }, 0, INT_MAX, 0,
+      "renderer" },
+    { "x11", "X11", 0, AV_OPT_TYPE_CONST, { .i64 = FFVA_RENDERER_TYPE_X11 },
+      0, 0, 0, "renderer" },
     { NULL, }
 };
 
@@ -66,6 +87,8 @@ print_help(const char *prog)
     printf("Options:\n");
     printf("  %-28s  display this help and exit\n",
            "-h, --help");
+    printf("  %-28s  select a particular renderer (string) [default='x11']\n",
+           "-r, --renderer=TYPE");
 }
 
 static const AVClass *
@@ -100,6 +123,7 @@ app_free(App *app)
     if (!app)
         return;
 
+    ffva_renderer_freep(&app->renderer);
     ffva_decoder_freep(&app->decoder);
     ffva_display_freep(&app->display);
     av_opt_free(app);
@@ -140,10 +164,53 @@ error_create_decoder:
 }
 
 static bool
+app_ensure_renderer(App *app)
+{
+    const Options * const options = &app->options;
+    uint32_t flags = 0;
+
+    if (!app->renderer) {
+        switch (options->renderer_type) {
+#if USE_X11
+        case FFVA_RENDERER_TYPE_X11:
+            app->renderer = ffva_renderer_x11_new(app->display, flags);
+            break;
+#endif
+        }
+        if (!app->renderer)
+            goto error_create_renderer;
+    }
+    return true;
+
+    /* ERRORS */
+error_create_renderer:
+    av_log(app, AV_LOG_ERROR, "failed to create renderer\n");
+    return false;
+}
+
+static bool
+app_ensure_renderer_size(App *app, uint32_t width, uint32_t height)
+{
+    if (!app_ensure_renderer(app))
+        return false;
+
+    if (app->renderer_width != width || app->renderer_height != height) {
+        if (!ffva_renderer_set_size(app->renderer, width, height))
+            return false;
+        app->renderer_width = width;
+        app->renderer_height = height;
+    }
+    return true;
+}
+
+static bool
 app_render_surface(App *app, FFVASurface *s, const VARectangle *rect,
     uint32_t flags)
 {
-    return true;
+    if (!app_ensure_renderer_size(app, rect->width, rect->height))
+        return false;
+
+    return ffva_renderer_put_surface(app->renderer, s, rect, NULL, flags);
 }
 
 static int
@@ -207,6 +274,8 @@ app_run(App *app)
         return false;
     if (!app_ensure_decoder(app))
         return false;
+    if (!app_ensure_renderer(app))
+        return false;
 
     if (ffva_decoder_open(app->decoder, options->filename) < 0)
         return false;
@@ -243,11 +312,12 @@ app_parse_options(App *app, int argc, char *argv[])
 
     static const struct option long_options[] = {
         { "help",           no_argument,        NULL, 'h'                   },
+        { "renderer",       required_argument,  NULL, 'r'                   },
         { NULL, }
     };
 
     for (;;) {
-        v = getopt_long(argc, argv, "-h", long_options, &o);
+        v = getopt_long(argc, argv, "-hr:", long_options, &o);
         if (v < 0)
             break;
 
@@ -257,6 +327,9 @@ app_parse_options(App *app, int argc, char *argv[])
         case 'h':
             print_help(argv[0]);
             return false;
+        case 'r':
+            ret = av_opt_set(app, "renderer", optarg, 0);
+            break;
         case '\1':
             ret = av_opt_set(app, "filename", optarg, 0);
             break;

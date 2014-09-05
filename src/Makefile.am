@@ -35,6 +35,8 @@ libffva_source_c = \
 	ffvadecoder.c		\
 	ffvadisplay.c		\
 	ffvafilter.c		\
+	ffvarenderer.c		\
+	ffvarenderer_x11.c	\
 	ffvasurface.c		\
 	vaapi_utils.c		\
 	$(NULL)
@@ -46,6 +48,9 @@ libffva_source_h = \
 	ffvadisplay.h		\
 	ffvadisplay_priv.h	\
 	ffvafilter.h		\
+	ffvarenderer.h		\
+	ffvarenderer_priv.h	\
+	ffvarenderer_x11.h	\
 	ffvasurface.h		\
 	vaapi_compat.h		\
 	vaapi_utils.h		\
