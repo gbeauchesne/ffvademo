@@ -150,9 +150,10 @@ static int
 app_render_frame(App *app, FFVADecoderFrame *dec_frame)
 {
     FFVASurface * const s = dec_frame->surface;
+    AVFrame * const frame = dec_frame->frame;
     const VARectangle *rect;
     VARectangle tmp_rect;
-    uint32_t flags;
+    uint32_t i, flags;
 
     if (dec_frame->has_crop_rect)
         rect = &dec_frame->crop_rect;
@@ -165,8 +166,15 @@ app_render_frame(App *app, FFVADecoderFrame *dec_frame)
     }
 
     flags = 0;
-    if (!app_render_surface(app, s, rect, flags))
-        return AVERROR_UNKNOWN;
+    for (i = 0; i < 1 + !!frame->interlaced_frame; i++) {
+        flags &= ~(VA_TOP_FIELD|VA_BOTTOM_FIELD);
+        if (frame->interlaced_frame) {
+            flags |= ((i == 0) ^ !!frame->top_field_first) == 0 ?
+                VA_TOP_FIELD : VA_BOTTOM_FIELD;
+        }
+        if (!app_render_surface(app, s, rect, flags))
+            return AVERROR_UNKNOWN;
+    }
     return 0;
 }
 
