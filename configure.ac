@@ -148,6 +148,34 @@ AC_DEFINE_UNQUOTED([USE_VA_X11], [$USE_VA_X11],
     [Defined to 1 if libva (X11) backend is enabled])
 AM_CONDITIONAL([USE_VA_X11], [test $USE_VA_X11 -eq 1])
 
+dnl Check for vpp (video post-processing) support
+USE_VA_VPP=0
+AC_CACHE_CHECK([for video post-postprocessing API],
+    ac_cv_have_va_vpp_api, [
+    saved_CPPFLAGS="$CPPFLAGS"
+    CPPFLAGS="$CPPFLAGS $LIBVA_CFLAGS"
+    saved_LIBS="$LIBS"
+    LIBS="$LIBS $LIBVA_LIBS"
+    AC_COMPILE_IFELSE(
+        [AC_LANG_PROGRAM(
+            [[#include <va/va.h>
+              #include <va/va_vpp.h>]],
+            [[VADisplay va_dpy;
+              VAContextID vpp_ctx;
+              VAProcFilterType filters[VAProcFilterCount];
+              unsigned int num_filters = VAProcFilterCount;
+              vaQueryVideoProcFilters(va_dpy, vpp_ctx, filters, &num_filters);
+              ]])],
+        [ac_cv_have_va_vpp_api="yes" USE_VA_VPP=1],
+        [ac_cv_have_va_vpp_api="no"]
+    )
+    CPPFLAGS="$saved_CPPFLAGS"
+    LIBS="$saved_LIBS"
+])
+AC_DEFINE_UNQUOTED([USE_VA_VPP], [$USE_VA_VPP],
+    [Defined to 1 if video post-processing is used])
+AM_CONDITIONAL([USE_VA_VPP], [test $USE_VA_VPP -eq 1])
+
 dnl ---------------------------------------------------------------------------
 dnl -- FFmpeg                                                                --
 dnl ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ libffva_source_c = \
 	ffmpeg_utils.c		\
 	ffvadecoder.c		\
 	ffvadisplay.c		\
+	ffvafilter.c		\
 	ffvasurface.c		\
 	vaapi_utils.c		\
 	$(NULL)
@@ -44,6 +45,7 @@ libffva_source_h = \
 	ffvadecoder.h		\
 	ffvadisplay.h		\
 	ffvadisplay_priv.h	\
+	ffvafilter.h		\
 	ffvasurface.h		\
 	vaapi_compat.h		\
 	vaapi_utils.h		\
