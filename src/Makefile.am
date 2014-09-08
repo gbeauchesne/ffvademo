@@ -25,6 +25,7 @@ libffva_libs = \
 
 libffva_source_c = \
 	ffmpeg_utils.c		\
+	ffvadecoder.c		\
 	ffvadisplay.c		\
 	ffvasurface.c		\
 	vaapi_utils.c		\
@@ -33,6 +34,7 @@ libffva_source_c = \
 libffva_source_h = \
 	ffmpeg_compat.h		\
 	ffmpeg_utils.h		\
+	ffvadecoder.h		\
 	ffvadisplay.h		\
 	ffvadisplay_priv.h	\
 	ffvasurface.h		\

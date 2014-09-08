@@ -25,6 +25,7 @@
 #include <getopt.h>
 #include <libavutil/opt.h>
 #include "ffvadisplay.h"
+#include "ffvadecoder.h"
 #include "ffmpeg_utils.h"
 
 typedef struct {
@@ -36,6 +37,7 @@ typedef struct {
     Options options;
     FFVADisplay *display;
     VADisplay va_display;
+    FFVADecoder *decoder;
 } App;
 
 #define OFFSET(x) offsetof(App, options.x)
@@ -98,6 +100,7 @@ app_free(App *app)
     if (!app)
         return;
 
+    ffva_decoder_freep(&app->decoder);
     ffva_display_freep(&app->display);
     av_opt_free(app);
     free(app);
@@ -121,21 +124,94 @@ error_create_display:
 }
 
 static bool
+app_ensure_decoder(App *app)
+{
+    if (!app->decoder) {
+        app->decoder = ffva_decoder_new(app->display);
+        if (!app->decoder)
+            goto error_create_decoder;
+    }
+    return true;
+
+    /* ERRORS */
+error_create_decoder:
+    av_log(app, AV_LOG_ERROR, "failed to create FFmpeg/vaapi decoder\n");
+    return false;
+}
+
+static bool
+app_render_surface(App *app, FFVASurface *s, const VARectangle *rect,
+    uint32_t flags)
+{
+    return true;
+}
+
+static int
+app_render_frame(App *app, FFVADecoderFrame *dec_frame)
+{
+    FFVASurface * const s = dec_frame->surface;
+    uint32_t flags;
+
+    flags = 0;
+    if (!app_render_surface(app, s, NULL, flags))
+        return AVERROR_UNKNOWN;
+    return 0;
+}
+
+static int
+app_decode_frame(App *app)
+{
+    FFVADecoderFrame *dec_frame;
+    int ret;
+
+    ret = ffva_decoder_get_frame(app->decoder, &dec_frame);
+    if (ret == 0) {
+        ret = app_render_frame(app, dec_frame);
+        ffva_decoder_put_frame(app->decoder, dec_frame);
+    }
+    return ret;
+}
+
+static bool
 app_run(App *app)
 {
     const Options * const options = &app->options;
+    FFVADecoderInfo info;
+    char errbuf[BUFSIZ];
+    int ret;
 
     if (!options->filename)
         goto error_no_filename;
 
     if (!app_ensure_display(app))
         return false;
+    if (!app_ensure_decoder(app))
+        return false;
 
+    if (ffva_decoder_open(app->decoder, options->filename) < 0)
+        return false;
+    if (ffva_decoder_start(app->decoder) < 0)
+        return false;
+
+    if (!ffva_decoder_get_info(app->decoder, &info))
+        return false;
+
+    do {
+        ret = app_decode_frame(app);
+    } while (ret == 0 || ret == AVERROR(EAGAIN));
+    if (ret != AVERROR_EOF)
+        goto error_decode_frame;
+    ffva_decoder_stop(app->decoder);
+    ffva_decoder_close(app->decoder);
     return true;
 
     /* ERRORS */
 error_no_filename:
     av_log(app, AV_LOG_ERROR, "no video file specified on command line\n");
+    return false;
+error_decode_frame:
+    av_log(app, AV_LOG_ERROR, "failed to decode frame: %s\n",
+        ffmpeg_strerror(ret, errbuf));
     return false;
 }
 
