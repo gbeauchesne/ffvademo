@@ -47,3 +47,6 @@ Usage
 
   * Play an H.264 video with an MP4 container
   $ ffvademo /path/to/video.mp4
+
+  * Play a VC-1 video while converting the output to I420 format
+  $ ffvademo -f yuv420p /path/to/video.wmv

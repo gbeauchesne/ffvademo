@@ -24,10 +24,13 @@
 #include "sysdeps.h"
 #include <getopt.h>
 #include <libavutil/opt.h>
+#include <libavutil/pixdesc.h>
 #include "ffvadisplay.h"
 #include "ffvadecoder.h"
+#include "ffvafilter.h"
 #include "ffvarenderer.h"
 #include "ffmpeg_utils.h"
+#include "vaapi_utils.h"
 
 #if USE_X11
 # include "ffvarenderer_x11.h"
@@ -43,6 +46,8 @@
 typedef struct {
     char *filename;
     FFVARendererType renderer_type;
+    enum AVPixelFormat pix_fmt;
+    int list_pix_fmts;
 } Options;
 
 typedef struct {
@@ -51,6 +56,10 @@ typedef struct {
     FFVADisplay *display;
     VADisplay va_display;
     FFVADecoder *decoder;
+    FFVAFilter *filter;
+    uint32_t filter_chroma;
+    uint32_t filter_fourcc;
+    FFVASurface filter_surface;
     FFVARenderer *renderer;
     uint32_t renderer_width;
     uint32_t renderer_height;
@@ -65,6 +74,10 @@ static const AVOption app_options[] = {
       "renderer" },
     { "x11", "X11", 0, AV_OPT_TYPE_CONST, { .i64 = FFVA_RENDERER_TYPE_X11 },
       0, 0, 0, "renderer" },
+    { "pix_fmt", "output pixel format", OFFSET(pix_fmt),
+      AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, -1, AV_PIX_FMT_NB-1, },
+    { "list_pix_fmts", "list output pixel formats", OFFSET(list_pix_fmts),
+      AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, },
     { NULL, }
 };
 
@@ -89,6 +102,10 @@ print_help(const char *prog)
            "-h, --help");
     printf("  %-28s  select a particular renderer (string) [default='x11']\n",
            "-r, --renderer=TYPE");
+    printf("  %-28s  output pixel format (AVPixelFormat) [default=none]\n",
+           "-f, --format=FORMAT");
+    printf("  %-28s  list output pixel formats\n",
+           "    --list-formats");
 }
 
 static const AVClass *
@@ -114,6 +131,7 @@ app_new(void)
 
     app->klass = app_class();
     av_opt_set_defaults(app);
+    ffva_surface_init_defaults(&app->filter_surface);
     return app;
 }
 
@@ -124,6 +142,8 @@ app_free(App *app)
         return;
 
     ffva_renderer_freep(&app->renderer);
+    va_destroy_surface(app->va_display, &app->filter_surface.id);
+    ffva_filter_freep(&app->filter);
     ffva_decoder_freep(&app->decoder);
     ffva_display_freep(&app->display);
     av_opt_free(app);
@@ -161,6 +181,76 @@ app_ensure_decoder(App *app)
 error_create_decoder:
     av_log(app, AV_LOG_ERROR, "failed to create FFmpeg/vaapi decoder\n");
     return false;
+}
+
+static bool
+app_ensure_filter(App *app)
+{
+    const Options * const options = &app->options;
+    const int *formats, *format = NULL;
+
+    if (!app->filter) {
+        app->filter = ffva_filter_new(app->display);
+        if (!app->filter)
+            goto error_create_filter;
+    }
+
+    if (options->pix_fmt == AV_PIX_FMT_NONE)
+        return true;
+
+    formats = ffva_filter_get_formats(app->filter);
+    if (formats) {
+        for (format = formats; *format != AV_PIX_FMT_NONE; format++) {
+            if (*format == options->pix_fmt)
+                break;
+        }
+    }
+    if (!format || *format == AV_PIX_FMT_NONE)
+        goto error_unsupported_format;
+
+    if (!ffmpeg_to_vaapi_pix_fmt(options->pix_fmt, &app->filter_fourcc,
+            &app->filter_chroma))
+        goto error_unsupported_format;
+    return true;
+
+    /* ERRORS */
+error_create_filter:
+    av_log(app, AV_LOG_ERROR, "failed to create video processing pipeline\n");
+    return false;
+error_unsupported_format:
+    av_log(app, AV_LOG_ERROR, "unsupported output format %s\n",
+        av_get_pix_fmt_name(options->pix_fmt));
+    return false;
+}
+
+static bool
+app_ensure_filter_surface(App *app, uint32_t width, uint32_t height)
+{
+    FFVASurface * const s = &app->filter_surface;
+    VASurfaceID va_surface;
+    VASurfaceAttrib attrib;
+    VAStatus va_status;
+
+    if (!app->filter)
+        return true; // VPP not needed (checked in app_ensure_filter())
+
+    if (width == s->width && height == s->height)
+        return true;
+
+    attrib.flags = VA_SURFACE_ATTRIB_SETTABLE;
+    attrib.type = VASurfaceAttribPixelFormat;
+    attrib.value.type = VAGenericValueTypeInteger;
+    attrib.value.value.i = app->filter_fourcc;
+
+    va_destroy_surface(app->va_display, &s->id);
+    va_status = vaCreateSurfaces(app->va_display, app->filter_chroma,
+        width, height, &va_surface, 1, &attrib, 1);
+    if (!va_check_status(va_status, "vaCreateSurfaces()"))
+        return false;
+
+    ffva_surface_init(s, va_surface, app->filter_chroma, width, height);
+    s->fourcc = app->filter_fourcc;
+    return true;
 }
 
 static bool
@@ -204,12 +294,39 @@ app_ensure_renderer_size(App *app, uint32_t width, uint32_t height)
 }
 
 static bool
+app_process_surface(App *app, FFVASurface *s, const VARectangle *rect,
+    uint32_t flags)
+{
+    FFVASurface * const d = &app->filter_surface;
+
+    if (!app_ensure_filter_surface(app, s->width, s->height))
+        return false;
+
+    if (ffva_filter_set_cropping_rectangle(app->filter, rect) < 0)
+        return false;
+
+    if (ffva_filter_process(app->filter, s, d, flags) < 0)
+        return false;
+    return true;
+}
+
+static bool
 app_render_surface(App *app, FFVASurface *s, const VARectangle *rect,
     uint32_t flags)
 {
     if (!app_ensure_renderer_size(app, rect->width, rect->height))
         return false;
 
+    if (app->filter) {
+        if (!app_process_surface(app, s, rect, flags))
+            return false;
+
+        // drop deinterlacing, color standard and scaling flags
+        flags &= ~(VA_TOP_FIELD|VA_BOTTOM_FIELD|0xf0|VA_FILTER_SCALING_MASK);
+
+        return ffva_renderer_put_surface(app->renderer, &app->filter_surface,
+            NULL, NULL, flags);
+    }
     return ffva_renderer_put_surface(app->renderer, s, rect, NULL, flags);
 }
 
@@ -260,17 +377,65 @@ app_decode_frame(App *app)
 }
 
 static bool
+app_list_formats(App *app)
+{
+    const int *formats;
+    int i;
+
+    if (!app_ensure_display(app))
+        return false;
+    if (!app_ensure_filter(app))
+        return false;
+
+    formats = ffva_filter_get_formats(app->filter);
+    if (!formats)
+        return false;
+
+    printf("List of supported output pixel formats:");
+    for (i = 0; formats[i] != AV_PIX_FMT_NONE; i++) {
+        if (i > 0)
+            printf(",");
+        printf(" %s", av_get_pix_fmt_name(formats[i]));
+    }
+    printf("\n");
+    return true;
+}
+
+static bool
+app_list_info(App *app)
+{
+    const Options * const options = &app->options;
+    bool list_info = false;
+
+    if (options->list_pix_fmts) {
+        app_list_formats(app);
+        list_info = true;
+    }
+    return list_info;
+}
+
+static bool
 app_run(App *app)
 {
     const Options * const options = &app->options;
     FFVADecoderInfo info;
+    bool need_filter;
     char errbuf[BUFSIZ];
     int ret;
+
+    if (app_list_info(app))
+        return true;
 
     if (!options->filename)
         goto error_no_filename;
 
+    need_filter = options->pix_fmt != AV_PIX_FMT_NONE;
+
     if (!app_ensure_display(app))
+        return false;
+    if (need_filter && !app_ensure_filter(app))
+        return false;
+    if (!app_ensure_renderer(app))
         return false;
     if (!app_ensure_decoder(app))
         return false;
@@ -310,14 +475,20 @@ app_parse_options(App *app, int argc, char *argv[])
     char errbuf[BUFSIZ];
     int ret, v, o = -1;
 
+    enum {
+        OPT_LIST_FORMATS = 1000,
+    };
+
     static const struct option long_options[] = {
         { "help",           no_argument,        NULL, 'h'                   },
         { "renderer",       required_argument,  NULL, 'r'                   },
+        { "format",         required_argument,  NULL, 'f'                   },
+        { "list-formats",   no_argument,        NULL, OPT_LIST_FORMATS      },
         { NULL, }
     };
 
     for (;;) {
-        v = getopt_long(argc, argv, "-hr:", long_options, &o);
+        v = getopt_long(argc, argv, "-hr:f:", long_options, &o);
         if (v < 0)
             break;
 
@@ -329,6 +500,12 @@ app_parse_options(App *app, int argc, char *argv[])
             return false;
         case 'r':
             ret = av_opt_set(app, "renderer", optarg, 0);
+            break;
+        case 'f':
+            ret = av_opt_set(app, "pix_fmt", optarg, 0);
+            break;
+        case OPT_LIST_FORMATS:
+            ret = av_opt_set_int(app, "list_pix_fmts", 1, 0);
             break;
         case '\1':
             ret = av_opt_set(app, "filename", optarg, 0);
