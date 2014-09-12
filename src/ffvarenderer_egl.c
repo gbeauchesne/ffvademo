@@ -140,6 +140,7 @@ get_va_mem_type(uint32_t flags)
         va_mem_type = VA_SURFACE_ATTRIB_MEM_TYPE_KERNEL_DRM;
         break;
     case FFVA_RENDERER_EGL_MEM_TYPE_MESA_IMAGE:
+    case FFVA_RENDERER_EGL_MEM_TYPE_MESA_TEXTURE:
         va_mem_type = 0;
         break;
     }
@@ -477,6 +478,8 @@ struct ffva_renderer_egl_s {
     VABufferInfo va_buf_info;
     uint32_t va_mem_type;
 
+    bool use_mesa_texture;
+    GLuint mesa_texture;
     bool use_mesa_image;
     EGLImageKHR mesa_image;
     FFVASurface mesa_surface;
@@ -557,6 +560,7 @@ ensure_vtable(FFVARendererEGL *rnd)
         "EGL_KHR_image_pixmap",
         "EGL_KHR_image_base",
         "EGL_EXT_image_dma_buf_import",
+        "EGL_KHR_gl_texture_2D_image",
         "EGL_MESA_drm_image",
         NULL
     };
@@ -749,6 +753,9 @@ renderer_init(FFVARendererEGL *rnd, uint32_t flags)
     ffva_surface_init_defaults(&rnd->mesa_surface);
 
     switch (flags & FFVA_RENDERER_EGL_MEM_TYPE_MASK) {
+    case FFVA_RENDERER_EGL_MEM_TYPE_MESA_TEXTURE:
+        rnd->use_mesa_texture = true;
+        // fall-through
     case FFVA_RENDERER_EGL_MEM_TYPE_MESA_IMAGE:
         rnd->use_mesa_image = true;
         break;
@@ -785,6 +792,11 @@ renderer_finalize(FFVARendererEGL *rnd)
     if (rnd->mesa_image != EGL_NO_IMAGE_KHR) {
         egl->vtable.egl_destroy_image_khr(egl->display, rnd->mesa_image);
         rnd->mesa_image = EGL_NO_IMAGE_KHR;
+    }
+
+    if (rnd->mesa_texture) {
+        glDeleteTextures(1, &rnd->mesa_texture);
+        rnd->mesa_texture = 0;
     }
 
     if (egl->num_textures > 0) {
@@ -1122,6 +1134,7 @@ renderer_bind_mesa_image(FFVARendererEGL *rnd, FFVASurface *s)
     EGLImageKHR image;
     EGLint name, stride;
     GLint attribs[23], *attrib;
+    GLuint texture;
     int ret;
 
     if (s->width != d->width || s->height != d->height) {
@@ -1129,23 +1142,53 @@ renderer_bind_mesa_image(FFVARendererEGL *rnd, FFVASurface *s)
             vtable->egl_destroy_image_khr(egl->display, rnd->mesa_image);
             rnd->mesa_image = EGL_NO_IMAGE_KHR;
         }
+        if (rnd->mesa_texture) {
+            glDeleteTextures(1, &rnd->mesa_texture);
+            rnd->mesa_texture = 0;
+        }
         va_destroy_surface(rnd->va_display, &rnd->mesa_surface.id);
 
-        attrib = attribs;
-        *attrib++ = EGL_DRM_BUFFER_FORMAT_MESA;
-        *attrib++ = EGL_DRM_BUFFER_FORMAT_ARGB32_MESA;
-        *attrib++ = EGL_WIDTH;
-        *attrib++ = s->width;
-        *attrib++ = EGL_HEIGHT;
-        *attrib++ = s->height;
-        *attrib++ = EGL_DRM_BUFFER_USE_MESA;
-        *attrib++ = EGL_DRM_BUFFER_USE_SHARE_MESA;
-        *attrib++ = EGL_NONE;
-        image = vtable->egl_create_drm_image_mesa(egl->display, attribs);
-        if (!image)
-            goto error_create_image;
-        rnd->mesa_image = image;
-        va_fourcc = VA_FOURCC('B','G','R','A');
+        if (rnd->use_mesa_texture) {
+            glGenTextures(1, &texture);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, s->width, s->height,
+                0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            rnd->mesa_texture = texture;
+
+            attrib = attribs;
+            *attrib++ = EGL_IMAGE_PRESERVED_KHR;
+            *attrib++ = EGL_TRUE;
+            *attrib++ = EGL_NONE;
+            image = vtable->egl_create_image_khr(egl->display, egl->context,
+                EGL_GL_TEXTURE_2D_KHR, (EGLClientBuffer)(uintptr_t)texture,
+                attribs);
+            if (!image)
+                goto error_create_image;
+            rnd->mesa_image = image;
+            va_fourcc = VA_FOURCC('R','G','B','A');
+        }
+        else {
+            attrib = attribs;
+            *attrib++ = EGL_DRM_BUFFER_FORMAT_MESA;
+            *attrib++ = EGL_DRM_BUFFER_FORMAT_ARGB32_MESA;
+            *attrib++ = EGL_WIDTH;
+            *attrib++ = s->width;
+            *attrib++ = EGL_HEIGHT;
+            *attrib++ = s->height;
+            *attrib++ = EGL_DRM_BUFFER_USE_MESA;
+            *attrib++ = EGL_DRM_BUFFER_USE_SHARE_MESA;
+            *attrib++ = EGL_NONE;
+            image = vtable->egl_create_drm_image_mesa(egl->display, attribs);
+            if (!image)
+                goto error_create_image;
+            rnd->mesa_image = image;
+            va_fourcc = VA_FOURCC('B','G','R','A');
+        }
 
         if (!vtable->egl_export_drm_image_mesa(egl->display, image, &name,
                 NULL, &stride))
@@ -1188,7 +1231,10 @@ renderer_bind_mesa_image(FFVARendererEGL *rnd, FFVASurface *s)
     if (ret != 0)
         goto error_transfer_surface;
 
-    egl->images[egl->num_images++] = rnd->mesa_image;
+    if (rnd->use_mesa_texture)
+        egl->textures[egl->num_textures++] = rnd->mesa_texture;
+    else
+        egl->images[egl->num_images++] = rnd->mesa_image;
     egl->tex_target = GL_TEXTURE_2D;
     renderer_set_shader_text(rnd, frag_shader_text_rgba, NULL);
     return true;
@@ -1251,8 +1297,14 @@ renderer_unbind_mesa_image(FFVARendererEGL *rnd)
 {
     EglContext * const egl = &rnd->egl_context;
 
-    egl->images[0] = EGL_NO_IMAGE_KHR;
-    egl->num_images = 0;
+    if (rnd->use_mesa_texture) {
+        egl->textures[0] = 0;
+        egl->num_textures = 0;
+    }
+    else {
+        egl->images[0] = EGL_NO_IMAGE_KHR;
+        egl->num_images = 0;
+    }
     return true;
 }
 
