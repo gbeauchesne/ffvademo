@@ -135,6 +135,9 @@ get_va_mem_type(uint32_t flags)
     case FFVA_RENDERER_EGL_MEM_TYPE_DMA_BUFFER:
         va_mem_type = VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME;
         break;
+    case FFVA_RENDERER_EGL_MEM_TYPE_GEM_BUFFER:
+        va_mem_type = VA_SURFACE_ATTRIB_MEM_TYPE_KERNEL_DRM;
+        break;
     }
     return va_mem_type;
 }
@@ -543,6 +546,7 @@ ensure_vtable(FFVARendererEGL *rnd)
         "EGL_KHR_image_pixmap",
         "EGL_KHR_image_base",
         "EGL_EXT_image_dma_buf_import",
+        "EGL_MESA_drm_image",
         NULL
     };
 
@@ -1015,6 +1019,53 @@ error_cleanup:
 }
 
 static bool
+renderer_bind_gem_buf(FFVARendererEGL *rnd)
+{
+    EglContext * const egl = &rnd->egl_context;
+    VAImage * const va_image = &rnd->va_image;
+    VABufferInfo * const va_buf_info = &rnd->va_buf_info;
+    EGLImageKHR image;
+    GLint attribs[23], *attrib;
+    
+    switch (va_image->format.fourcc) {
+    case VA_FOURCC('B','G','R','A'): {
+        attrib = attribs;
+        *attrib++ = EGL_DRM_BUFFER_FORMAT_MESA;
+        *attrib++ = EGL_DRM_BUFFER_FORMAT_ARGB32_MESA;
+        *attrib++ = EGL_WIDTH;
+        *attrib++ = va_image->width;
+        *attrib++ = EGL_HEIGHT;
+        *attrib++ = va_image->height;
+        *attrib++ = EGL_DRM_BUFFER_STRIDE_MESA;
+        *attrib++ = va_image->pitches[0] / 4;
+        *attrib++ = EGL_NONE;
+        image = egl->vtable.egl_create_image_khr(egl->display, EGL_NO_CONTEXT,
+            EGL_DRM_BUFFER_MESA, (EGLClientBuffer)va_buf_info->handle, attribs);
+        if (!image) {
+            av_log(rnd, AV_LOG_ERROR,
+                "failed to import VA buffer (%.4s) into EGL image\n",
+                (char *)&va_image->format.fourcc);
+            return false;
+        }
+        egl->images[egl->num_images++] = image;
+        renderer_set_shader_text(rnd, frag_shader_text_rgba, NULL);
+        break;
+    }
+    default:
+        goto error_unsupported_format;
+    }
+
+    egl->tex_target = GL_TEXTURE_2D;
+    return true;
+
+    /* ERRORS */
+error_unsupported_format:
+    av_log(rnd, AV_LOG_ERROR, "unsupported VA buffer format %.4s\n",
+        (char *)&va_image->format.fourcc);
+    return false;
+}
+
+static bool
 renderer_bind_surface(FFVARendererEGL *rnd, FFVASurface *s)
 {
     VAStatus va_status;
@@ -1034,6 +1085,10 @@ renderer_bind_surface(FFVARendererEGL *rnd, FFVASurface *s)
     switch (rnd->va_buf_info.mem_type) {
     case VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME:
         if (!renderer_bind_dma_buf(rnd))
+            return false;
+        break;
+    case VA_SURFACE_ATTRIB_MEM_TYPE_KERNEL_DRM:
+        if (!renderer_bind_gem_buf(rnd))
             return false;
         break;
     default:
