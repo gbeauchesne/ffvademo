@@ -216,6 +216,112 @@ static const char *frag_shader_text_rgba =
     "    gl_FragColor = texture2D(tex0, v_texcoord);\n"
     "}\n";
 
+/*
+ * For 8-bit per sample, and RGB limited range [16, 235]:
+ *
+ *             219                219                       219
+ *   Y =  16 + --- * Kr     * R + --- * (1 - Kr - Kb) * G + --- * Kb     * B
+ *             255                255                       255
+ *
+ *             112     Kr         112   1 - (Kr + Kb)       112
+ *   U = 128 - --- * ------ * R - --- * ------------- * G + ---          * B
+ *             255   1 - Kb       255      1 - Kb           255
+ *
+ *             112                112   1 - (Kr + Kb)       112     Kb
+ *   V = 128 + ---          * R - --- * ------------- * G - --- * ------ * B
+ *             255                255      1 - Kr           255   1 - Kr
+ *
+ * Constants for ITU-R BT.601 (SDTV):
+ *   Kb = 0.114
+ *   Kr = 0.299
+ *
+ * Constants for ITU-R BT.709 (HDTV):
+ *   Kb = 0.0722
+ *   Kr = 0.2126
+ *
+ * Constants for SMPTE 240M:
+ *   Kb = 0.087
+ *   Kr = 0.212
+ *
+ * Matrix generation with xcas:
+ *   inverse([
+ *   [  Kr         ,  1-(Kr+Kb)          ,  Kb        ]*219/255,
+ *   [ -Kr/(1-Kb)  , -(1-(Kr+Kb))/(1-Kb) ,  1         ]*112/255,
+ *   [  1          , -(1-(Kr+Kb))/(1-Kr) , -Kb/(1-Kr) ]*112/255])
+ *
+ * As a reminder:
+ * - Kb + Kr + Kg = 1.0
+ * - Y range is [0.0, 1.0], U/V range is [-1.0, 1.0]
+ */
+#define YUV2RGB_COLOR_BT601_LIMITED                     \
+    "const vec3 yuv2rgb_ofs = vec3(0.0625, 0.5, 0.5);"  \
+    "const mat3 yuv2rgb_mat = "                         \
+    "    mat3(1.16438356,  0         ,  1.61651785, "   \
+    "         1.16438356, -0.38584641, -0.78656070, "   \
+    "         1.16438356,  2.01723214, 0          );\n"
+
+#define YUV2RGB_COLOR_BT709_LIMITED                     \
+    "const vec3 yuv2rgb_ofs = vec3(0.0625, 0.5, 0.5);"  \
+    "const mat3 yuv2rgb_mat = "                         \
+    "    mat3(1.16438356,  0         ,  1.79274107, "   \
+    "         1.16438356, -0.21324861, -0.53290932, "   \
+    "         1.16438356,  2.11240178, 0          );\n"
+
+#define YUV2RGB_COLOR_SMPTE240M_LIMITED                 \
+    "const vec3 yuv2rgb_ofs = vec3(0.0625, 0.5, 0.5);"  \
+    "const mat3 yuv2rgb_mat = "                         \
+    "    mat3(1.16438356,  0         ,  1.79410714, "   \
+    "         1.16438356, -0.25798483, -0.54258304, "   \
+    "         1.16438356,  2.07870535,  0         );\n"
+
+#define YUV2RGB_COLOR(CONV)                             \
+    U_GEN_CONCAT(YUV2RGB_COLOR_,CONV)                   \
+    "vec3 rgb = (yuv - yuv2rgb_ofs) * yuv2rgb_mat;\n"   \
+    "gl_FragColor = vec4(rgb, 1);\n"
+
+static const char *frag_shader_text_nv12 =
+    "#ifdef GL_ES\n"
+    "#extension GL_OES_EGL_image_external : require\n"
+    "precision mediump float;\n"
+    "uniform samplerExternalOES tex0;\n"
+    "uniform samplerExternalOES tex1;\n"
+    "#else\n"
+    "uniform sampler2D tex0;\n"
+    "uniform sampler2D tex1;\n"
+    "#endif\n"
+    "\n"
+    "varying vec2 v_texcoord;\n"
+    "\n"
+    "void main() {\n"
+    "    vec4 p_y  = texture2D(tex0, v_texcoord);\n"
+    "    vec4 p_uv = texture2D(tex1, v_texcoord);\n"
+    "    vec3 yuv  = vec3(p_y.r, p_uv.r, p_uv.g);\n"
+    YUV2RGB_COLOR(BT601_LIMITED)
+    "}\n";
+
+static const char *frag_shader_text_yuv =
+    "#ifdef GL_ES\n"
+    "#extension GL_OES_EGL_image_external : require\n"
+    "precision mediump float;\n"
+    "uniform samplerExternalOES tex0;\n"
+    "uniform samplerExternalOES tex1;\n"
+    "uniform samplerExternalOES tex2;\n"
+    "#else\n"
+    "uniform sampler2D tex0;\n"
+    "uniform sampler2D tex1;\n"
+    "uniform sampler2D tex2;\n"
+    "#endif\n"
+    "\n"
+    "varying vec2 v_texcoord;\n"
+    "\n"
+    "void main() {\n"
+    "    vec4 p_y = texture2D(tex0, v_texcoord);\n"
+    "    vec4 p_u = texture2D(tex1, v_texcoord);\n"
+    "    vec4 p_v = texture2D(tex2, v_texcoord);\n"
+    "    vec3 yuv = vec3(p_y.r, p_u.r, p_v.r);\n"
+    YUV2RGB_COLOR(BT601_LIMITED)
+    "}\n";
+
 #if USE_GLES_VERSION != 0
 static const char *frag_shader_text_egl_external =
     "#extension GL_OES_EGL_image_external : require\n"
@@ -780,6 +886,76 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
 
     switch (va_image->format.fourcc) {
 #ifdef EGL_IMAGE_INTERNAL_FORMAT_EXT
+    case VA_FOURCC('N','V','1','2'): {
+        for (i = 0; i < va_image->num_planes; i++) {
+            const uint32_t is_uv_plane = i > 0;
+
+            attrib = attribs;
+            *attrib++ = EGL_IMAGE_INTERNAL_FORMAT_EXT;
+            *attrib++ = is_uv_plane ? GL_RG8 : GL_R8;
+            *attrib++ = EGL_WIDTH;
+            *attrib++ = (va_image->width + is_uv_plane) >> is_uv_plane;
+            *attrib++ = EGL_HEIGHT;
+            *attrib++ = (va_image->height + is_uv_plane) >> is_uv_plane;
+            *attrib++ = EGL_DMA_BUF_PLANE0_FD_EXT;
+            *attrib++ = fds[i];
+            *attrib++ = EGL_DMA_BUF_PLANE0_OFFSET_EXT;
+            *attrib++ = va_image->offsets[i];
+            *attrib++ = EGL_DMA_BUF_PLANE0_PITCH_EXT;
+            *attrib++ = va_image->pitches[i];
+            *attrib++ = EGL_NONE;
+            image = egl->vtable.egl_create_image_khr(egl->display,
+                EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, (EGLClientBuffer)NULL,
+                attribs);
+            if (!image) {
+                av_log(rnd, AV_LOG_ERROR,
+                    "failed to import VA buffer (NV12:%s) into EGL image\n",
+                    is_uv_plane ? "UV" : "Y");
+                goto error_cleanup;
+            }
+            egl->images[egl->num_images++] = image;
+        }
+        renderer_set_shader_text(rnd, frag_shader_text_nv12, NULL);
+        break;
+    }
+    case VA_FOURCC('I','4','2','0'):
+    case VA_FOURCC('Y','V','1','2'): {
+        const uint32_t swap_uv_planes =
+            va_image->format.fourcc != VA_FOURCC('I','4','2','0');
+
+        for (i = 0; i < va_image->num_planes; i++) {
+            const uint32_t is_uv_plane = i > 0;
+            const uint32_t p = i ^ (3 & -(is_uv_plane & swap_uv_planes));
+
+            attrib = attribs;
+            *attrib++ = EGL_IMAGE_INTERNAL_FORMAT_EXT;
+            *attrib++ = GL_R8;
+            *attrib++ = EGL_WIDTH;
+            *attrib++ = (va_image->width + is_uv_plane) >> is_uv_plane;
+            *attrib++ = EGL_HEIGHT;
+            *attrib++ = (va_image->height + is_uv_plane) >> is_uv_plane;
+            *attrib++ = EGL_DMA_BUF_PLANE0_FD_EXT;
+            *attrib++ = fds[i];
+            *attrib++ = EGL_DMA_BUF_PLANE0_OFFSET_EXT;
+            *attrib++ = va_image->offsets[p];
+            *attrib++ = EGL_DMA_BUF_PLANE0_PITCH_EXT;
+            *attrib++ = va_image->pitches[p];
+            *attrib++ = EGL_NONE;
+            image = egl->vtable.egl_create_image_khr(egl->display,
+                EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, (EGLClientBuffer)NULL,
+                attribs);
+            if (!image) {
+                av_log(rnd, AV_LOG_ERROR,
+                    "failed to import VA buffer (%s:%c) into EGL image\n",
+                    swap_uv_planes ? "YV12" : "I420",
+                    p == 0 ? 'Y' : p == 1 ? 'U' : 'V');
+                goto error_cleanup;
+            }
+            egl->images[egl->num_images++] = image;
+        }
+        renderer_set_shader_text(rnd, frag_shader_text_yuv, NULL);
+        break;
+    }
     case VA_FOURCC('R','G','B','A'):
         gl_format = GL_RGBA;
         goto bind_rgb_formats;
