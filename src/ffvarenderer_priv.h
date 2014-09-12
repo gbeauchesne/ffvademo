@@ -34,6 +34,7 @@ typedef struct ffva_renderer_class_s    FFVARendererClass;
 
 typedef bool (*FFVARendererInitFunc)(FFVARenderer *rnd, uint32_t flags);
 typedef void (*FFVARendererFinalizeFunc)(FFVARenderer *rnd);
+typedef uintptr_t (*FFVARendererGetVisualIdFunc)(FFVARenderer *rnd);
 typedef bool (*FFVARendererGetSizeFunc)(FFVARenderer *rnd, uint32_t *width_ptr,
     uint32_t *height_ptr);
 typedef bool (*FFVARendererSetSizeFunc)(FFVARenderer *rnd, uint32_t width,
@@ -56,6 +57,7 @@ struct ffva_renderer_class_s {
     FFVARendererType type;
     FFVARendererInitFunc init;
     FFVARendererFinalizeFunc finalize;
+    FFVARendererGetVisualIdFunc get_visual_id;
     FFVARendererGetSizeFunc get_size;
     FFVARendererSetSizeFunc set_size;
     FFVARendererPutSurfaceFunc put_surface;
@@ -65,5 +67,9 @@ DLL_HIDDEN
 FFVARenderer *
 ffva_renderer_new(const FFVARendererClass *klass, FFVADisplay *display,
     uint32_t flags);
+
+DLL_HIDDEN
+uintptr_t
+ffva_renderer_get_visual_id(FFVARenderer *rnd);
 
 #endif /* FFVA_RENDERER_PRIV_H */

@@ -25,6 +25,7 @@
 #include <getopt.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
+#include <va/va_drmcommon.h>
 #include "ffvadisplay.h"
 #include "ffvadecoder.h"
 #include "ffvafilter.h"
@@ -35,6 +36,9 @@
 #if USE_X11
 # include "ffvarenderer_x11.h"
 #endif
+#if USE_EGL
+# include "ffvarenderer_egl.h"
+#endif
 
 // Default window size
 #define DEFAULT_WIDTH  640
@@ -43,9 +47,17 @@
 // Default renderer
 #define DEFAULT_RENDERER FFVA_RENDERER_TYPE_X11
 
+// Default memory type
+#define DEFAULT_MEM_TYPE MEM_TYPE_DMA_BUF
+
+typedef enum {
+    MEM_TYPE_DMA_BUF = 1,
+} MemType;
+
 typedef struct {
     char *filename;
     FFVARendererType renderer_type;
+    uint32_t mem_type;
     enum AVPixelFormat pix_fmt;
     int list_pix_fmts;
     uint32_t window_width;
@@ -80,6 +92,12 @@ static const AVOption app_options[] = {
       "renderer" },
     { "x11", "X11", 0, AV_OPT_TYPE_CONST, { .i64 = FFVA_RENDERER_TYPE_X11 },
       0, 0, 0, "renderer" },
+    { "egl", "EGL", 0, AV_OPT_TYPE_CONST, { .i64 = FFVA_RENDERER_TYPE_EGL },
+      0, 0, 0, "renderer" },
+    { "mem_type", "memory type for VA buffer exports", OFFSET(mem_type),
+      AV_OPT_TYPE_FLAGS, { .i64 = 0}, 0, UINT_MAX, 0, "mem_type" },
+    { "dma_buf", "DMA buffer handle", 0, AV_OPT_TYPE_CONST,
+      { .i64 = MEM_TYPE_DMA_BUF }, 0, 0, 0, "mem_type" },
     { "pix_fmt", "output pixel format", OFFSET(pix_fmt),
       AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, -1, AV_PIX_FMT_NB-1, },
     { "list_pix_fmts", "list output pixel formats", OFFSET(list_pix_fmts),
@@ -112,6 +130,8 @@ print_help(const char *prog)
            "-y, --window-height=HEIGHT");
     printf("  %-28s  select a particular renderer (string) [default='x11']\n",
            "-r, --renderer=TYPE");
+    printf("  %-28s  VA buffer export memory type (string) [default='auto']\n",
+           "-m, --mem-type=TYPE");
     printf("  %-28s  output pixel format (AVPixelFormat) [default=none]\n",
            "-f, --format=FORMAT");
     printf("  %-28s  list output pixel formats\n",
@@ -274,6 +294,16 @@ app_ensure_renderer(App *app)
 #if USE_X11
         case FFVA_RENDERER_TYPE_X11:
             app->renderer = ffva_renderer_x11_new(app->display, flags);
+            break;
+#endif
+#if USE_EGL
+        case FFVA_RENDERER_TYPE_EGL:
+            switch (options->mem_type) {
+            case MEM_TYPE_DMA_BUF:
+                flags |= FFVA_RENDERER_EGL_MEM_TYPE_DMA_BUFFER;
+                break;
+            }
+            app->renderer = ffva_renderer_egl_new(app->display, flags);
             break;
 #endif
         }
@@ -501,13 +531,14 @@ app_parse_options(App *app, int argc, char *argv[])
         { "window-width",   required_argument,  NULL, 'x'                   },
         { "window-height",  required_argument,  NULL, 'y'                   },
         { "renderer",       required_argument,  NULL, 'r'                   },
+        { "mem-type",       required_argument,  NULL, 'm'                   },
         { "format",         required_argument,  NULL, 'f'                   },
         { "list-formats",   no_argument,        NULL, OPT_LIST_FORMATS      },
         { NULL, }
     };
 
     for (;;) {
-        v = getopt_long(argc, argv, "-hx:y:r:f:", long_options, &o);
+        v = getopt_long(argc, argv, "-hx:y:r:m:f:", long_options, &o);
         if (v < 0)
             break;
 
@@ -525,6 +556,9 @@ app_parse_options(App *app, int argc, char *argv[])
             break;
         case 'r':
             ret = av_opt_set(app, "renderer", optarg, 0);
+            break;
+        case 'm':
+            ret = av_opt_set(app, "mem_type", optarg, 0);
             break;
         case 'f':
             ret = av_opt_set(app, "pix_fmt", optarg, 0);

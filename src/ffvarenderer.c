@@ -165,3 +165,15 @@ ffva_renderer_get_native_window(FFVARenderer *rnd)
         return NULL;
     return rnd->window;
 }
+
+uintptr_t
+ffva_renderer_get_visual_id(FFVARenderer *rnd)
+{
+    FFVARendererClass *klass;
+
+    if (!rnd)
+        return 0;
+
+    klass = FFVA_RENDERER_GET_CLASS(rnd);
+    return klass->get_visual_id ? klass->get_visual_id(rnd) : 0;
+}

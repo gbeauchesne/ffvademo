@@ -33,6 +33,7 @@ typedef struct ffva_renderer_s          FFVARenderer;
 
 typedef enum {
     FFVA_RENDERER_TYPE_X11 = 1,
+    FFVA_RENDERER_TYPE_EGL,
 } FFVARendererType;
 
 /** Releases all renderer resources */

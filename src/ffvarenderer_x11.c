@@ -114,14 +114,26 @@ window_create(FFVARendererX11 *rnd, uint32_t width, uint32_t height)
     XSetWindowAttributes xswa;
     unsigned long xswa_mask;
     XWindowAttributes wattr;
+    int num_visuals;
+    VisualID vid;
 
     XGetWindowAttributes(rnd->display, rnd->root_window, &wattr);
     depth = wattr.depth;
     if (depth != 15 && depth != 16 && depth != 24 && depth != 32)
         depth = 24;
 
-    vi = &visualInfo;
-    XMatchVisualInfo(rnd->display, rnd->screen, depth, TrueColor, vi);
+    vid = ffva_renderer_get_visual_id(rnd->base.parent);
+    if (vid) {
+        visualInfo.visualid = vid;
+        vi = XGetVisualInfo(rnd->display, VisualIDMask, &visualInfo,
+            &num_visuals);
+        if (!vi || num_visuals < 1)
+            goto error_create_visual;
+    }
+    else {
+        vi = &visualInfo;
+        XMatchVisualInfo(rnd->display, rnd->screen, depth, TrueColor, vi);
+    }
 
     xswa_mask = CWBorderPixel | CWBackPixel;
     xswa.border_pixel = rnd->black_pixel;
@@ -144,6 +156,12 @@ window_create(FFVARendererX11 *rnd, uint32_t width, uint32_t height)
     return true;
 
     /* ERRORS */
+error_create_visual:
+    av_log(rnd, AV_LOG_ERROR, "failed to create X visual (id:%zu)\n",
+        (size_t)visualInfo.visualid);
+    if (vi)
+        XFree(vi);
+    return false;
 error_create_window:
     av_log(rnd, AV_LOG_ERROR, "failed to create X window of size %ux%u\n",
         width, height);

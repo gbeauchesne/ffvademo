@@ -56,6 +56,16 @@ libffva_source_h = \
 	vaapi_utils.h		\
 	$(NULL)
 
+libffva_source_egl_c = ffvarenderer_egl.c
+libffva_source_egl_h = ffvarenderer_egl.h
+
+if USE_EGL
+libffva_source_c		+= $(libffva_source_egl_c)
+libffva_source_h		+= $(libffva_source_egl_h)
+libffva_cflags			+= $(EGL_CFLAGS) $(GLAPI_CFLAGS)
+libffva_libs			+= $(EGL_LIBS) $(GLAPI_LIBS)
+endif
+
 libffva_la_SOURCES		= $(libffva_source_c)
 libffva_la_CFLAGS		= $(libffva_cflags)
 libffva_la_LIBADD		= $(libffva_libs)
@@ -68,6 +78,8 @@ ffvademo_LDADD			= libffva.la
 EXTRA_DIST = \
 	$(libffva_source_c)	\
 	$(libffva_source_h)	\
+	$(libffva_source_egl_c)	\
+	$(libffva_source_egl_h)	\
 	$(NULL)
 
 # Extra clean files so that maintainer-clean removes *everything*

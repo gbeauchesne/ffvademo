@@ -10,6 +10,9 @@ m4_append([ffva_version], ffva_pre_version, [.pre])
 ])
 
 # Configure defaults
+m4_define([default_renderer],           [x11])
+m4_define([default_glapi],              [gles])
+m4_define([default_glesapi],            [2])
 m4_define([default_builtin_ffmpeg],     [yes])
 
 # FFmpeg version number
@@ -61,6 +64,16 @@ AC_ARG_ENABLE([builtin-ffmpeg],
         [build built-in FFmpeg module @<:@default=default_builtin_ffmpeg@:>@]),
     [], [enable_builtin_ffmpeg=default_builtin_ffmpeg])
 
+AC_ARG_WITH([renderer],
+    AS_HELP_STRING([--with-renderer=TARGET],
+        [build with the specified rendering TARGET
+         @<:@default=default_renderer@:>@]),
+    [FFVA_RENDERER="$with_renderer"], [FFVA_RENDERER=default_renderer])
+AC_ARG_WITH([glapi],
+    AS_HELP_STRING([--with-glapi=API],
+        [build with the specified OpenGL API @<:@default=default_glapi@:>@]),
+    [FFVA_GLAPI="$with_glapi"], [FFVA_GLAPI=default_glapi])
+
 dnl Resolve dependencies
 if test "$enable_builtin_ffmpeg" = "yes"; then
     needs_yasm="yes"
@@ -98,26 +111,129 @@ dnl -- Renderers                                                             --
 dnl ---------------------------------------------------------------------------
 
 dnl Renderer
-FFVA_RENDERER="x11"
+DEFAULT_RENDERER=default_renderer
+case "$FFVA_RENDERER" in
+    egl)        FFVA_RENDERER="${FFVA_RENDERER}_${DEFAULT_RENDERER}";;
+esac
 case "$FFVA_RENDERER" in
     x11)        FFVA_RENDERER_NAME="X11";;
+    egl_x11)    FFVA_RENDERER_NAME="EGL/X11";;
     *) AC_MSG_ERROR([Unsupported renderer $FFVA_RENDERER]);;
 esac
 AC_SUBST([FFVA_RENDERER])
 
 dnl Check for X11
 USE_X11=0
-if test "$FFVA_RENDERER" = "x11"; then
+case "$FFVA_RENDERER" in
+(*x11*)
     PKG_CHECK_MODULES([X11], [x11])
     saved_CPPFLAGS="$CPPFLAGS"
     CPPFLAGS="$CPPFLAGS $X11_CFLAGS"
     AC_CHECK_HEADERS([X11/Xlib.h X11/Xutil.h X11/Xatom.h],
         [USE_X11=1], [AC_MSG_ERROR([incomplete libx11-dev (headers) package])])
     CPPFLAGS="$saved_CPPFLAGS"
-fi
+    ;;
+esac
 AC_DEFINE_UNQUOTED([USE_X11], [$USE_X11],
     [Defined to 1 if X11 renderer is enabled])
 AM_CONDITIONAL([USE_X11], [test $USE_X11 -eq 1])
+
+dnl Check for EGL
+USE_EGL=0
+case "$FFVA_RENDERER" in
+(*egl*)
+    PKG_CHECK_MODULES([EGL], [egl])
+    saved_CPPFLAGS="$CPPFLAGS"
+    CPPFLAGS="$CPPFLAGS $EGL_CFLAGS"
+    AC_CHECK_HEADERS([EGL/egl.h],
+        [USE_EGL=1], [AC_MSG_ERROR([incomplete libegl-dev (headers) package])])
+    CPPFLAGS="$saved_CPPFLAGS"
+    ;;
+esac
+AC_DEFINE_UNQUOTED([USE_EGL], [$USE_EGL],
+    [Defined to 1 if EGL renderer is enabled])
+AM_CONDITIONAL([USE_EGL], [test $USE_EGL -eq 1])
+
+dnl OpenGL API
+DEFAULT_GLESAPI=default_glesapi
+case "$FFVA_GLAPI" in
+    gles)       FFVA_GLAPI="${FFVA_GLAPI}${DEFAULT_GLESAPI}";;
+esac
+case "$FFVA_GLAPI" in
+    gl)         FFVA_GLAPI_NAME="OpenGL";;
+    gles1)      FFVA_GLAPI_NAME="OpenGL|ES";;
+    gles2)      FFVA_GLAPI_NAME="OpenGL|ESv2";;
+    gles3)      FFVA_GLAPI_NAME="OpenGL|ESv3";;
+    *) AC_MSG_ERROR([Unsupported OpenGL API $FFVA_GLAPI]);;
+esac
+AC_SUBST([FFVA_GLAPI])
+
+dnl Check for OpenGL
+case "$FFVA_GLAPI" in
+(gl)
+    PKG_CHECK_MODULES([GLAPI], [gl])
+    saved_CPPFLAGS="$CPPFLAGS"
+    CPPFLAGS="$CPPFLAGS $GLAPI_CFLAGS"
+    AC_CHECK_HEADERS([GL/gl.h GL/glext.h],
+        [USE_GLES_VERSION=0],
+        [AC_MSG_ERROR([incomplete libgl-dev (headers) package])], [
+#ifdef HAVE_GL_GL_H
+# include <GL/gl.h>
+#endif
+    ])
+    CPPFLAGS="$saved_CPPFLAGS"
+    ;;
+esac
+
+dnl Check for OpenGL|ES
+case "$FFVA_GLAPI" in
+(gles1)
+    PKG_CHECK_MODULES([GLAPI], [glesv1_cm])
+    saved_CPPFLAGS="$CPPFLAGS"
+    CPPFLAGS="$CPPFLAGS $GLAPI_CFLAGS"
+    AC_CHECK_HEADERS([GLES/gl.h GLES/glext.h],
+        [USE_GLES_VERSION=1],
+        [AC_MSG_ERROR([incomplete libgles1-dev (headers) package])], [
+#ifdef HAVE_GLES_GL_H
+# include <GLES/gl.h>
+#endif
+    ])
+    ;;
+esac
+
+dnl Check for OpenGL|ESv2
+case "$FFVA_GLAPI" in
+(gles2)
+    PKG_CHECK_MODULES([GLAPI], [glesv2])
+    saved_CPPFLAGS="$CPPFLAGS"
+    CPPFLAGS="$CPPFLAGS $GLAPI_CFLAGS"
+    AC_CHECK_HEADERS([GLES2/gl2.h GLES2/gl2ext.h],
+        [USE_GLES_VERSION=2],
+        [AC_MSG_ERROR([incomplete libgles2-dev (headers) package])], [
+#ifdef HAVE_GLES2_GL2_H
+# include <GLES2/gl2.h>
+#endif
+    ])
+    ;;
+esac
+
+dnl Check for OpenGL|ESv3
+case "$FFVA_GLAPI" in
+(gles3)
+    PKG_CHECK_MODULES([GLAPI], [glesv2])
+    saved_CPPFLAGS="$CPPFLAGS"
+    CPPFLAGS="$CPPFLAGS $GLAPI_CFLAGS"
+    AC_CHECK_HEADERS([GLES3/gl3.h GLES3/gl3ext.h GLES2/gl2ext.h],
+        [USE_GLES_VERSION=3],
+        [AC_MSG_ERROR([incomplete libgles3-dev (headers) package])], [
+#ifdef HAVE_GLES3_GL3_H
+# include <GLES3/gl3.h>
+#endif
+    ])
+    ;;
+esac
+AC_DEFINE_UNQUOTED([USE_GLES_VERSION], [$USE_GLES_VERSION],
+    [Defined to the OpenGL|ES version to use (0:OpenGL)])
 
 dnl ---------------------------------------------------------------------------
 dnl -- VA-API                                                                --
@@ -228,8 +344,13 @@ AC_CONFIG_FILES([
 AC_OUTPUT
 
 dnl Print summary
+FFVA_RENDERER_STRING="$FFVA_RENDERER_NAME"
+case "$FFVA_RENDERER" in (*egl*)
+FFVA_RENDERER_STRING="$FFVA_RENDERER_STRING ($FFVA_GLAPI_NAME)";;
+esac
+
 echo
 echo $PACKAGE configuration summary:
 echo
-echo Renderer ......................... : $FFVA_RENDERER_NAME
+echo Renderer ......................... : $FFVA_RENDERER_STRING
 echo VA-API version ................... : $VA_VERSION_STR

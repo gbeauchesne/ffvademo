@@ -25,6 +25,7 @@ Features
 
   * FFmpeg decoder with VA-API support
   * Native X11 renderer through vaPutSurface()
+  * EGL renderer showing off VA/EGL interop capabilities
 
 Non-goals
 
@@ -38,7 +39,7 @@ Requirements
 
 Software requirements
 
-  * VA-API
+  * VA-API (>= 0.36.0 for VA/EGL interop)
   * FFmpeg (>= 2.1)
 
 
@@ -50,3 +51,6 @@ Usage
 
   * Play a VC-1 video while converting the output to I420 format
   $ ffvademo -f yuv420p /path/to/video.wmv
+
+  * Play an H.264 video while rendering with EGL/GLESv2
+  $ ffvademo -r egl -f argb /path/to/video.mp4
