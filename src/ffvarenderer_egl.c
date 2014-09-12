@@ -28,6 +28,7 @@
 #include <va/va_drmcommon.h>
 #include <drm_fourcc.h>
 #include "vaapi_utils.h"
+#include "ffvafilter.h"
 #include "ffvarenderer_egl.h"
 #include "ffvarenderer_priv.h"
 
@@ -138,6 +139,9 @@ get_va_mem_type(uint32_t flags)
     case FFVA_RENDERER_EGL_MEM_TYPE_GEM_BUFFER:
         va_mem_type = VA_SURFACE_ATTRIB_MEM_TYPE_KERNEL_DRM;
         break;
+    case FFVA_RENDERER_EGL_MEM_TYPE_MESA_IMAGE:
+        va_mem_type = 0;
+        break;
     }
     return va_mem_type;
 }
@@ -154,6 +158,8 @@ struct egl_vtable_s {
     PFNEGLCREATEIMAGEKHRPROC egl_create_image_khr;
     PFNEGLDESTROYIMAGEKHRPROC egl_destroy_image_khr;
     PFNGLEGLIMAGETARGETTEXTURE2DOESPROC gl_egl_image_target_texture2d_oes;
+    PFNEGLCREATEDRMIMAGEMESAPROC egl_create_drm_image_mesa;
+    PFNEGLEXPORTDRMIMAGEMESAPROC egl_export_drm_image_mesa;
 };
 
 struct egl_context_s {
@@ -470,6 +476,11 @@ struct ffva_renderer_egl_s {
     VAImage va_image;
     VABufferInfo va_buf_info;
     uint32_t va_mem_type;
+
+    bool use_mesa_image;
+    EGLImageKHR mesa_image;
+    FFVASurface mesa_surface;
+    FFVAFilter *mesa_filter;
 };
 
 static bool
@@ -577,6 +588,16 @@ ensure_vtable(FFVARendererEGL *rnd)
         (PFNEGLDESTROYIMAGEKHRPROC)eglGetProcAddress("eglDestroyImageKHR");
     if (!vtable->egl_create_image_khr || !vtable->egl_destroy_image_khr) {
         av_log(rnd, AV_LOG_ERROR, "failed to load EGL_KHR_image_base hooks\n");
+        return false;
+    }
+
+    vtable->egl_create_drm_image_mesa =
+        (PFNEGLCREATEDRMIMAGEMESAPROC)eglGetProcAddress("eglCreateDRMImageMESA");
+    vtable->egl_export_drm_image_mesa =
+        (PFNEGLEXPORTDRMIMAGEMESAPROC)eglGetProcAddress("eglExportDRMImageMESA");
+    if (!vtable->egl_create_drm_image_mesa ||
+        !vtable->egl_export_drm_image_mesa) {
+        av_log(rnd, AV_LOG_ERROR, "failed to load EGL_MESA_drm_image hooks\n");
         return false;
     }
 
@@ -725,6 +746,19 @@ renderer_init(FFVARendererEGL *rnd, uint32_t flags)
     matrix_set_identity(egl->proj);
     va_image_init_defaults(&rnd->va_image);
     rnd->va_mem_type = get_va_mem_type(flags);
+    ffva_surface_init_defaults(&rnd->mesa_surface);
+
+    switch (flags & FFVA_RENDERER_EGL_MEM_TYPE_MASK) {
+    case FFVA_RENDERER_EGL_MEM_TYPE_MESA_IMAGE:
+        rnd->use_mesa_image = true;
+        break;
+    }
+
+    if (rnd->use_mesa_image) {
+        rnd->mesa_filter = ffva_filter_new(rnd->base.display);
+        if (!rnd->mesa_filter)
+            return false;
+    }
     return true;
 }
 
@@ -748,6 +782,11 @@ renderer_finalize(FFVARendererEGL *rnd)
     }
     egl->num_images = 0;
 
+    if (rnd->mesa_image != EGL_NO_IMAGE_KHR) {
+        egl->vtable.egl_destroy_image_khr(egl->display, rnd->mesa_image);
+        rnd->mesa_image = EGL_NO_IMAGE_KHR;
+    }
+
     if (egl->num_textures > 0) {
         glDeleteTextures(egl->num_textures, egl->textures);
         egl->num_textures = 0;
@@ -768,6 +807,9 @@ renderer_finalize(FFVARendererEGL *rnd)
         egl->display = NULL;
     }
     ffva_renderer_freep(&rnd->native_renderer);
+
+    ffva_filter_freep(&rnd->mesa_filter);
+    va_destroy_surface(rnd->va_display, &rnd->mesa_surface.id);
 }
 
 static uintptr_t
@@ -1066,9 +1108,114 @@ error_unsupported_format:
 }
 
 static bool
+renderer_bind_mesa_image(FFVARendererEGL *rnd, FFVASurface *s)
+{
+    EglContext * const egl = &rnd->egl_context;
+    EglVTable * const vtable = &egl->vtable;
+    FFVASurface * const d = &rnd->mesa_surface;
+    VASurfaceAttribExternalBuffers va_extbuf;
+    unsigned long va_extbuf_handle;
+    VASurfaceAttrib va_attribs[2], *va_attrib;
+    VASurfaceID va_surface;
+    uint32_t va_fourcc;
+    VAStatus va_status;
+    EGLImageKHR image;
+    EGLint name, stride;
+    GLint attribs[23], *attrib;
+    int ret;
+
+    if (s->width != d->width || s->height != d->height) {
+        if (rnd->mesa_image != EGL_NO_IMAGE_KHR) {
+            vtable->egl_destroy_image_khr(egl->display, rnd->mesa_image);
+            rnd->mesa_image = EGL_NO_IMAGE_KHR;
+        }
+        va_destroy_surface(rnd->va_display, &rnd->mesa_surface.id);
+
+        attrib = attribs;
+        *attrib++ = EGL_DRM_BUFFER_FORMAT_MESA;
+        *attrib++ = EGL_DRM_BUFFER_FORMAT_ARGB32_MESA;
+        *attrib++ = EGL_WIDTH;
+        *attrib++ = s->width;
+        *attrib++ = EGL_HEIGHT;
+        *attrib++ = s->height;
+        *attrib++ = EGL_DRM_BUFFER_USE_MESA;
+        *attrib++ = EGL_DRM_BUFFER_USE_SHARE_MESA;
+        *attrib++ = EGL_NONE;
+        image = vtable->egl_create_drm_image_mesa(egl->display, attribs);
+        if (!image)
+            goto error_create_image;
+        rnd->mesa_image = image;
+        va_fourcc = VA_FOURCC('B','G','R','A');
+
+        if (!vtable->egl_export_drm_image_mesa(egl->display, image, &name,
+                NULL, &stride))
+            goto error_export_image;
+
+        va_attrib = va_attribs;
+        va_attrib->type = VASurfaceAttribExternalBufferDescriptor;
+        va_attrib->flags = VA_SURFACE_ATTRIB_SETTABLE;
+        va_attrib->value.type = VAGenericValueTypePointer;
+        va_attrib->value.value.p = &va_extbuf;
+        va_attrib++;
+        va_attrib->type = VASurfaceAttribMemoryType;
+        va_attrib->flags = VA_SURFACE_ATTRIB_SETTABLE;
+        va_attrib->value.type = VAGenericValueTypeInteger;
+        va_attrib->value.value.i = VA_SURFACE_ATTRIB_MEM_TYPE_KERNEL_DRM;
+        va_attrib++;
+
+        va_extbuf_handle = name;
+        va_extbuf.pixel_format = va_fourcc;
+        va_extbuf.width = s->width;
+        va_extbuf.height = s->height;
+        va_extbuf.data_size = va_extbuf.height * stride;
+        va_extbuf.num_planes = 1;
+        va_extbuf.pitches[0] = stride;
+        va_extbuf.offsets[0] = 0;
+        va_extbuf.buffers = &va_extbuf_handle;
+        va_extbuf.num_buffers = 1;
+        va_extbuf.flags = 0;
+        va_extbuf.private_data = NULL;
+        va_status = vaCreateSurfaces(rnd->va_display, VA_RT_FORMAT_RGB32,
+            s->width, s->height, &va_surface, 1, va_attribs,
+            va_attrib - va_attribs);
+        if (!va_check_status(va_status, "vaCreateSurfaces()"))
+            goto error_create_surface;
+        ffva_surface_init(d, va_surface, VA_RT_FORMAT_RGB32,
+            s->width, s->height);
+    }
+
+    ret = ffva_filter_process(rnd->mesa_filter, s, d, 0);
+    if (ret != 0)
+        goto error_transfer_surface;
+
+    egl->images[egl->num_images++] = rnd->mesa_image;
+    egl->tex_target = GL_TEXTURE_2D;
+    renderer_set_shader_text(rnd, frag_shader_text_rgba, NULL);
+    return true;
+
+    /* ERRORS */
+error_create_image:
+    av_log(rnd, AV_LOG_ERROR, "failed to create Mesa DRM image of size %ux%d\n",
+        s->width, s->height);
+    return false;
+error_export_image:
+    av_log(rnd, AV_LOG_ERROR, "failed to export Mesa DRM image %p\n", image);
+    return false;
+error_create_surface:
+    av_log(rnd, AV_LOG_ERROR, "failed to create Mesa VA surface\n");
+    return false;
+error_transfer_surface:
+    av_log(rnd, AV_LOG_ERROR, "failed to transfer VA surface to Mesa image\n");
+    return false;
+}
+
+static bool
 renderer_bind_surface(FFVARendererEGL *rnd, FFVASurface *s)
 {
     VAStatus va_status;
+
+    if (rnd->use_mesa_image)
+        return renderer_bind_mesa_image(rnd, s);
 
     va_image_init_defaults(&rnd->va_image);
     va_status = vaDeriveImage(rnd->va_display, s->id, &rnd->va_image);
@@ -1100,10 +1247,23 @@ renderer_bind_surface(FFVARendererEGL *rnd, FFVASurface *s)
 }
 
 static bool
+renderer_unbind_mesa_image(FFVARendererEGL *rnd)
+{
+    EglContext * const egl = &rnd->egl_context;
+
+    egl->images[0] = EGL_NO_IMAGE_KHR;
+    egl->num_images = 0;
+    return true;
+}
+
+static bool
 renderer_unbind_surface(FFVARendererEGL *rnd)
 {
     VAStatus va_status;
     uint32_t has_errors = 0;
+
+    if (rnd->use_mesa_image)
+        return renderer_unbind_mesa_image(rnd);
 
     if (rnd->va_buf_info.mem_size > 0) {
         va_status = vaReleaseBufferHandle(rnd->va_display, rnd->va_image.buf);

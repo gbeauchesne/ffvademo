@@ -53,6 +53,7 @@
 typedef enum {
     MEM_TYPE_DMA_BUF = 1,
     MEM_TYPE_GEM_BUF,
+    MEM_TYPE_MESA_IMAGE,
 } MemType;
 
 typedef struct {
@@ -101,6 +102,8 @@ static const AVOption app_options[] = {
       { .i64 = MEM_TYPE_DMA_BUF }, 0, 0, 0, "mem_type" },
     { "gem_buf", "GEM buffer handle", 0, AV_OPT_TYPE_CONST,
       { .i64 = MEM_TYPE_GEM_BUF }, 0, 0, 0, "mem_type" },
+    { "mesa_image", "EGLImage exported from Mesa", 0, AV_OPT_TYPE_CONST,
+      { .i64 = MEM_TYPE_MESA_IMAGE }, 0, 0, 0, "mem_type" },
     { "pix_fmt", "output pixel format", OFFSET(pix_fmt),
       AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, -1, AV_PIX_FMT_NB-1, },
     { "list_pix_fmts", "list output pixel formats", OFFSET(list_pix_fmts),
@@ -307,6 +310,9 @@ app_ensure_renderer(App *app)
                 break;
             case MEM_TYPE_GEM_BUF:
                 flags |= FFVA_RENDERER_EGL_MEM_TYPE_GEM_BUFFER;
+                break;
+            case MEM_TYPE_MESA_IMAGE:
+                flags |= FFVA_RENDERER_EGL_MEM_TYPE_MESA_IMAGE;
                 break;
             }
             app->renderer = ffva_renderer_egl_new(app->display, flags);

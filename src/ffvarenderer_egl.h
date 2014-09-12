@@ -33,6 +33,7 @@ typedef struct ffva_renderer_egl_s      FFVARendererEGL;
 enum {
     FFVA_RENDERER_EGL_MEM_TYPE_DMA_BUFFER = 1,
     FFVA_RENDERER_EGL_MEM_TYPE_GEM_BUFFER,
+    FFVA_RENDERER_EGL_MEM_TYPE_MESA_IMAGE,
     FFVA_RENDERER_EGL_MEM_TYPE_MASK = (0x7 << 0),
 };
 
