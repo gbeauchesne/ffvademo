@@ -452,6 +452,15 @@ egl_program_freep(EglProgram **program_ptr)
 }
 
 static void
+gl_texture_init_defaults(GLuint texture, GLenum target)
+{
+    glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+static void
 matrix_set_identity(GLfloat *m)
 {
 #define MAT(m,r,c) (m)[(c) * 4 + (r)]
@@ -479,9 +488,7 @@ struct ffva_renderer_egl_s {
     uint32_t va_mem_type;
 
     bool use_mesa_texture;
-    GLuint mesa_texture;
     bool use_mesa_image;
-    EGLImageKHR mesa_image;
     FFVASurface mesa_surface;
     FFVAFilter *mesa_filter;
 };
@@ -770,16 +777,13 @@ renderer_init(FFVARendererEGL *rnd, uint32_t flags)
 }
 
 static void
-renderer_finalize(FFVARendererEGL *rnd)
+renderer_clear_images(FFVARendererEGL *rnd)
 {
     EglContext * const egl = &rnd->egl_context;
     uint32_t i;
 
-    if (egl->display)
-        eglMakeCurrent(egl->display, EGL_NO_SURFACE, EGL_NO_SURFACE,
-            EGL_NO_CONTEXT);
-
-    egl_program_freep(&egl->program);
+    if (egl->num_images < 1)
+        return;
 
     for (i = 0; i < egl->num_images; i++) {
         if (egl->images[i] == EGL_NO_IMAGE_KHR)
@@ -788,21 +792,33 @@ renderer_finalize(FFVARendererEGL *rnd)
         egl->images[i] = EGL_NO_IMAGE_KHR;
     }
     egl->num_images = 0;
+}
 
-    if (rnd->mesa_image != EGL_NO_IMAGE_KHR) {
-        egl->vtable.egl_destroy_image_khr(egl->display, rnd->mesa_image);
-        rnd->mesa_image = EGL_NO_IMAGE_KHR;
-    }
+static void
+renderer_clear_textures(FFVARendererEGL *rnd)
+{
+    EglContext * const egl = &rnd->egl_context;
 
-    if (rnd->mesa_texture) {
-        glDeleteTextures(1, &rnd->mesa_texture);
-        rnd->mesa_texture = 0;
-    }
+    if (egl->num_textures < 1)
+        return;
 
-    if (egl->num_textures > 0) {
-        glDeleteTextures(egl->num_textures, egl->textures);
-        egl->num_textures = 0;
-    }
+    glDeleteTextures(egl->num_textures, egl->textures);
+    egl->num_textures = 0;
+}
+
+static void
+renderer_finalize(FFVARendererEGL *rnd)
+{
+    EglContext * const egl = &rnd->egl_context;
+
+    if (egl->display)
+        eglMakeCurrent(egl->display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+            EGL_NO_CONTEXT);
+
+    egl_program_freep(&egl->program);
+
+    renderer_clear_images(rnd);
+    renderer_clear_textures(rnd);
 
     if (egl->surface) {
         eglDestroySurface(egl->display, egl->surface);
@@ -879,6 +895,26 @@ renderer_set_shader_text(FFVARendererEGL *rnd, const char *frag_shader_text,
         egl->vert_shader_text = vert_shader_text;
         egl->program_changed = true;
     }
+}
+
+// Creates GL textures and binds them to the existing EGGL images
+static bool
+renderer_bind_textures(FFVARendererEGL *rnd)
+{
+    EglContext * const egl = &rnd->egl_context;
+    GLuint texture;
+    uint32_t i;
+
+    for (i = 0; i < egl->num_images; i++) {
+        glGenTextures(1, &texture);
+        glBindTexture(egl->tex_target, texture);
+        gl_texture_init_defaults(texture, egl->tex_target);
+        egl->vtable.gl_egl_image_target_texture2d_oes(egl->tex_target,
+            egl->images[i]);
+        glBindTexture(egl->tex_target, 0);
+        egl->textures[egl->num_textures++] = texture;
+    }
+    return true;
 }
 
 static bool
@@ -1138,27 +1174,18 @@ renderer_bind_mesa_image(FFVARendererEGL *rnd, FFVASurface *s)
     int ret;
 
     if (s->width != d->width || s->height != d->height) {
-        if (rnd->mesa_image != EGL_NO_IMAGE_KHR) {
-            vtable->egl_destroy_image_khr(egl->display, rnd->mesa_image);
-            rnd->mesa_image = EGL_NO_IMAGE_KHR;
-        }
-        if (rnd->mesa_texture) {
-            glDeleteTextures(1, &rnd->mesa_texture);
-            rnd->mesa_texture = 0;
-        }
+        renderer_clear_images(rnd);
+        renderer_clear_textures(rnd);
         va_destroy_surface(rnd->va_display, &rnd->mesa_surface.id);
 
         if (rnd->use_mesa_texture) {
             glGenTextures(1, &texture);
             glBindTexture(GL_TEXTURE_2D, texture);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            gl_texture_init_defaults(texture, GL_TEXTURE_2D);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, s->width, s->height,
                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
             glBindTexture(GL_TEXTURE_2D, 0);
-            rnd->mesa_texture = texture;
+            egl->textures[egl->num_textures++] = texture;
 
             attrib = attribs;
             *attrib++ = EGL_IMAGE_PRESERVED_KHR;
@@ -1169,7 +1196,7 @@ renderer_bind_mesa_image(FFVARendererEGL *rnd, FFVASurface *s)
                 attribs);
             if (!image)
                 goto error_create_image;
-            rnd->mesa_image = image;
+            egl->images[egl->num_images++] = image;
             va_fourcc = VA_FOURCC('R','G','B','A');
         }
         else {
@@ -1186,7 +1213,7 @@ renderer_bind_mesa_image(FFVARendererEGL *rnd, FFVASurface *s)
             image = vtable->egl_create_drm_image_mesa(egl->display, attribs);
             if (!image)
                 goto error_create_image;
-            rnd->mesa_image = image;
+            egl->images[egl->num_images++] = image;
             va_fourcc = VA_FOURCC('B','G','R','A');
         }
 
@@ -1231,10 +1258,6 @@ renderer_bind_mesa_image(FFVARendererEGL *rnd, FFVASurface *s)
     if (ret != 0)
         goto error_transfer_surface;
 
-    if (rnd->use_mesa_texture)
-        egl->textures[egl->num_textures++] = rnd->mesa_texture;
-    else
-        egl->images[egl->num_images++] = rnd->mesa_image;
     egl->tex_target = GL_TEXTURE_2D;
     renderer_set_shader_text(rnd, frag_shader_text_rgba, NULL);
     return true;
@@ -1295,16 +1318,6 @@ renderer_bind_surface(FFVARendererEGL *rnd, FFVASurface *s)
 static bool
 renderer_unbind_mesa_image(FFVARendererEGL *rnd)
 {
-    EglContext * const egl = &rnd->egl_context;
-
-    if (rnd->use_mesa_texture) {
-        egl->textures[0] = 0;
-        egl->num_textures = 0;
-    }
-    else {
-        egl->images[0] = EGL_NO_IMAGE_KHR;
-        egl->num_images = 0;
-    }
     return true;
 }
 
@@ -1422,20 +1435,12 @@ static bool
 renderer_put_surface(FFVARendererEGL *rnd, FFVASurface *surface,
     const VARectangle *src_rect, const VARectangle *dst_rect, uint32_t flags)
 {
-    EglContext * const egl = &rnd->egl_context;
-    GLuint texture;
-    uint32_t i, has_errors = 0;
+    uint32_t has_errors = 0;
 
-    for (i = 0; i < egl->num_images; i++) {
-        if (egl->images[i] != EGL_NO_IMAGE_KHR)
-            egl->vtable.egl_destroy_image_khr(egl->display, egl->images[i]);
-    }
-    egl->num_images = 0;
-
-    if (egl->num_textures > 0) {
-        glDeleteTextures(egl->num_textures, egl->textures);
-        egl->num_textures = 0;
-    }
+    if (!rnd->use_mesa_image)
+        renderer_clear_images(rnd);
+    if (!rnd->use_mesa_texture)
+        renderer_clear_textures(rnd);
 
     if (!renderer_bind_surface(rnd, surface)) {
         av_log(rnd, AV_LOG_ERROR, "failed to bind VA surface 0x%08x\n",
@@ -1443,17 +1448,9 @@ renderer_put_surface(FFVARendererEGL *rnd, FFVASurface *surface,
         has_errors++;
     }
 
-    for (i = 0; i < egl->num_images; i++) {
-        glGenTextures(1, &texture);
-        glBindTexture(egl->tex_target, texture);
-        glTexParameteri(egl->tex_target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(egl->tex_target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(egl->tex_target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(egl->tex_target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        egl->vtable.gl_egl_image_target_texture2d_oes(egl->tex_target,
-            egl->images[i]);
-        glBindTexture(egl->tex_target, 0);
-        egl->textures[egl->num_textures++] = texture;
+    if (!rnd->use_mesa_texture && !renderer_bind_textures(rnd)) {
+        av_log(rnd, AV_LOG_ERROR, "failed to bind GL textures\n");
+        has_errors++;
     }
 
     if (!renderer_redraw(rnd, surface, src_rect, dst_rect)) {
