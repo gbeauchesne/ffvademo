@@ -48,6 +48,8 @@ typedef struct {
     FFVARendererType renderer_type;
     enum AVPixelFormat pix_fmt;
     int list_pix_fmts;
+    uint32_t window_width;
+    uint32_t window_height;
 } Options;
 
 typedef struct {
@@ -69,6 +71,10 @@ typedef struct {
 static const AVOption app_options[] = {
     { "filename", "path to video file to decode", OFFSET(filename),
       AV_OPT_TYPE_STRING, },
+    { "window_width", "window width", OFFSET(window_width),
+      AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 4096 },
+    { "window_height", "window height", OFFSET(window_height),
+      AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 4096 },
     { "renderer", "renderer type to use", OFFSET(renderer_type),
       AV_OPT_TYPE_FLAGS, { .i64 = DEFAULT_RENDERER }, 0, INT_MAX, 0,
       "renderer" },
@@ -100,6 +106,10 @@ print_help(const char *prog)
     printf("Options:\n");
     printf("  %-28s  display this help and exit\n",
            "-h, --help");
+    printf("  %-28s  window width (int) [default=0]\n",
+           "-x, --window-width=WIDTH");
+    printf("  %-28s  window height (int) [default=0]\n",
+           "-y, --window-height=HEIGHT");
     printf("  %-28s  select a particular renderer (string) [default='x11']\n",
            "-r, --renderer=TYPE");
     printf("  %-28s  output pixel format (AVPixelFormat) [default=none]\n",
@@ -314,7 +324,14 @@ static bool
 app_render_surface(App *app, FFVASurface *s, const VARectangle *rect,
     uint32_t flags)
 {
-    if (!app_ensure_renderer_size(app, rect->width, rect->height))
+    const Options * const options = &app->options;
+    uint32_t renderer_width, renderer_height;
+
+    renderer_width = options->window_width ? options->window_width :
+        rect->width;
+    renderer_height = options->window_height ? options->window_height :
+        rect->height;
+    if (!app_ensure_renderer_size(app, renderer_width, renderer_height))
         return false;
 
     if (app->filter) {
@@ -481,6 +498,8 @@ app_parse_options(App *app, int argc, char *argv[])
 
     static const struct option long_options[] = {
         { "help",           no_argument,        NULL, 'h'                   },
+        { "window-width",   required_argument,  NULL, 'x'                   },
+        { "window-height",  required_argument,  NULL, 'y'                   },
         { "renderer",       required_argument,  NULL, 'r'                   },
         { "format",         required_argument,  NULL, 'f'                   },
         { "list-formats",   no_argument,        NULL, OPT_LIST_FORMATS      },
@@ -488,7 +507,7 @@ app_parse_options(App *app, int argc, char *argv[])
     };
 
     for (;;) {
-        v = getopt_long(argc, argv, "-hr:f:", long_options, &o);
+        v = getopt_long(argc, argv, "-hx:y:r:f:", long_options, &o);
         if (v < 0)
             break;
 
@@ -498,6 +517,12 @@ app_parse_options(App *app, int argc, char *argv[])
         case 'h':
             print_help(argv[0]);
             return false;
+        case 'x':
+            ret = av_opt_set(app, "window_width", optarg, 0);
+            break;
+        case 'y':
+            ret = av_opt_set(app, "window_height", optarg, 0);
+            break;
         case 'r':
             ret = av_opt_set(app, "renderer", optarg, 0);
             break;
