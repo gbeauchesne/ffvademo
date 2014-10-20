@@ -42,6 +42,7 @@ libffva_source_c = \
 	$(NULL)
 
 libffva_source_h = \
+	egl_compat.h		\
 	ffmpeg_compat.h		\
 	ffmpeg_utils.h		\
 	ffvadecoder.h		\

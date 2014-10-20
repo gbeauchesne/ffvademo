@@ -27,6 +27,7 @@
 #include <va/va.h>
 #include <va/va_drmcommon.h>
 #include <drm_fourcc.h>
+#include "egl_compat.h"
 #include "vaapi_utils.h"
 #include "ffvafilter.h"
 #include "ffvarenderer_egl.h"
@@ -34,38 +35,6 @@
 
 #if USE_X11
 # include "ffvarenderer_x11.h"
-#endif
-
-#if USE_GLES_VERSION == 0
-# define GL_GLEXT_PROTOTYPES 1
-# include <GL/gl.h>
-# include <GL/glext.h>
-# define OPENGL_API             EGL_OPENGL_API
-# define OPENGL_BIT             EGL_OPENGL_BIT
-#elif USE_GLES_VERSION == 1
-# include <GLES/gl.h>
-# include <GLES/glext.h>
-# define OPENGL_API             EGL_OPENGL_ES_API
-# define OPENGL_BIT             EGL_OPENGL_ES_BIT
-#elif USE_GLES_VERSION == 2
-# include <GLES2/gl2.h>
-# include <GLES2/gl2ext.h>
-# define OPENGL_API             EGL_OPENGL_ES_API
-# define OPENGL_BIT             EGL_OPENGL_ES2_BIT
-#elif USE_GLES_VERSION == 3
-# include <GLES3/gl3.h>
-# include <GLES3/gl3ext.h>
-# include <GLES2/gl2ext.h>
-# define OPENGL_API             EGL_OPENGL_ES_API
-# define OPENGL_BIT             EGL_OPENGL_ES3_BIT_KHR
-#else
-# error "Unsupported GLES API version"
-#endif
-#ifndef GL_R8
-#define GL_R8                   GL_R8_EXT
-#endif
-#ifndef GL_RG8
-#define GL_RG8                  GL_RG8_EXT
 #endif
 
 /* Define the VA buffer memory type to use. 0:let the driver decide */
