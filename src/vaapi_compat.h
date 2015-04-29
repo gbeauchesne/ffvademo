@@ -56,6 +56,8 @@ enum {
 #if !VA_CHECK_VERSION(0,36,1)
 #define VAProfileHEVCMain       VACompatProfileHEVCMain
 #define VAProfileHEVCMain10     VACompatProfileHEVCMain10
+#endif
+#if !VA_CHECK_VERSION(0,37,1)
 #define VAProfileVP9Version0    VACompatProfileVP9Version0
 #endif
 
