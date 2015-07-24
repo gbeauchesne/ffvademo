@@ -88,7 +88,7 @@ ffmpeg_to_vaapi_profile(enum AVCodecID ff_codec, int ff_profile,
         break;
 #if FFMPEG_HAS_VP9_DECODER
     case AV_CODEC_ID_VP9:
-        profile = VAProfileVP9Version0;
+        profile = VAProfileVP9Profile0;
         break;
 #endif
     default:

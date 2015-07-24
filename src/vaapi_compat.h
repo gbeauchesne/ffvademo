@@ -48,7 +48,7 @@ enum {
     VACompatProfileNone         = -1,
     VACompatProfileHEVCMain     = 17,
     VACompatProfileHEVCMain10   = 18,
-    VACompatProfileVP9Version0  = 19,
+    VACompatProfileVP9Profile0  = 19,
 };
 #if !VA_CHECK_VERSION(0,34,0)
 #define VAProfileNone           VACompatProfileNone
@@ -58,7 +58,7 @@ enum {
 #define VAProfileHEVCMain10     VACompatProfileHEVCMain10
 #endif
 #if !VA_CHECK_VERSION(0,37,1)
-#define VAProfileVP9Version0    VACompatProfileVP9Version0
+#define VAProfileVP9Profile0    VACompatProfileVP9Profile0
 #endif
 
 /* Entrypoints */
