@@ -1,3 +1,3 @@
 [submodule "ext/ffmpeg/upstream"]
 	path = ext/ffmpeg/upstream
-	url = git://source.ffmpeg.org/ffmpeg.git
+	url = git://github.com/gbeauchesne/FFmpeg.git
