@@ -324,6 +324,8 @@ app_ensure_renderer(App *app)
             app->renderer = ffva_renderer_egl_new(app->display, flags);
             break;
 #endif
+        default:
+            break;
         }
         if (!app->renderer)
             goto error_create_renderer;
