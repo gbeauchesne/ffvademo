@@ -549,7 +549,7 @@ decoder_open(FFVADecoder *dec, const char *filename)
     if (ret < 0)
         goto error_open_codec;
 
-    dec->frame = avcodec_alloc_frame();
+    dec->frame = av_frame_alloc();
     if (!dec->frame)
         goto error_alloc_frame;
 
@@ -594,7 +594,7 @@ decoder_close(FFVADecoder *dec)
         avformat_close_input(&dec->fmtctx);
         dec->fmtctx = NULL;
     }
-    av_freep(&dec->frame);
+    av_frame_free(&dec->frame);
 
     dec->state &= ~STATE_OPENED;
 }

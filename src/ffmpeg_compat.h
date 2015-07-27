@@ -131,4 +131,25 @@ enum AVCodecID {
 #define FF_PROFILE_HEVC_MAIN_STILL_PICTURE 3
 #endif
 
+/* AVFrame related utilities */
+#define AV_FEATURE_AVFRAME_API \
+    (LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(55,45,101))
+
+#if !AV_FEATURE_AVFRAME_API
+#define av_frame_alloc()        av_compat_frame_alloc()
+#define av_frame_free(f)        av_compat_frame_free(f)
+
+static inline AVFrame *
+av_compat_frame_alloc(void)
+{
+    return avcodec_alloc_frame();
+}
+
+static inline void
+av_compat_frame_free(AVFrame **frame_ptr)
+{
+    avcodec_free_frame(frame_ptr);
+}
+#endif
+
 #endif /* FFMPEG_COMPAT_H */
