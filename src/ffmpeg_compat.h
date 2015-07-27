@@ -134,6 +134,8 @@ enum AVCodecID {
 /* AVFrame related utilities */
 #define AV_FEATURE_AVFRAME_API \
     (LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(55,45,101))
+#define AV_FEATURE_AVFRAME_REF \
+    (LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(51,43,0))
 
 #if !AV_FEATURE_AVFRAME_API
 #define av_frame_alloc()        av_compat_frame_alloc()

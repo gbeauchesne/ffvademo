@@ -364,6 +364,48 @@ vaapi_get_format(AVCodecContext *avctx, const enum AVPixelFormat *pix_fmts)
     return AV_PIX_FMT_VAAPI_VLD;
 }
 
+// Common initialization of AVFrame fields for VA-API purposes
+static void
+vaapi_get_buffer_common(AVCodecContext *avctx, AVFrame *frame, FFVASurface *s)
+{
+    memset(frame->data, 0, sizeof(frame->data));
+    frame->data[0] = (uint8_t *)(uintptr_t)s->id;
+    frame->data[3] = (uint8_t *)(uintptr_t)s->id;
+    memset(frame->linesize, 0, sizeof(frame->linesize));
+    frame->linesize[0] = avctx->coded_width; /* XXX: 8-bit per sample only */
+    vaapi_set_frame_surface(avctx, frame, s);
+}
+
+#if AV_FEATURE_AVFRAME_REF
+// AVCodecContext.get_buffer2() implementation for VA-API
+static int
+vaapi_get_buffer2(AVCodecContext *avctx, AVFrame *frame, int flags)
+{
+    FFVADecoder * const dec = avctx->opaque;
+    FFVASurface *s;
+    AVBufferRef *buf;
+    int ret;
+
+    if (!(avctx->codec->capabilities & CODEC_CAP_DR1))
+        return avcodec_default_get_buffer2(avctx, frame, flags);
+
+    ret = vaapi_acquire_surface(dec, &s);
+    if (ret != 0)
+        return ret;
+
+    buf = av_buffer_create((uint8_t *)s, 0,
+        (void (*)(void *, uint8_t *))vaapi_release_surface, dec,
+        AV_BUFFER_FLAG_READONLY);
+    if (!buf) {
+        vaapi_release_surface(dec, s);
+        return AVERROR(ENOMEM);
+    }
+    frame->buf[0] = buf;
+
+    vaapi_get_buffer_common(avctx, frame, s);
+    return 0;
+}
+#else
 // AVCodecContext.get_buffer() implementation for VA-API
 static int
 vaapi_get_buffer(AVCodecContext *avctx, AVFrame *frame)
@@ -380,12 +422,7 @@ vaapi_get_buffer(AVCodecContext *avctx, AVFrame *frame)
     frame->type = FF_BUFFER_TYPE_USER;
     frame->reordered_opaque = avctx->reordered_opaque;
 
-    memset(frame->data, 0, sizeof(frame->data));
-    frame->data[0] = (uint8_t *)(uintptr_t)s->id;
-    frame->data[3] = (uint8_t *)(uintptr_t)s->id;
-    memset(frame->linesize, 0, sizeof(frame->linesize));
-    frame->linesize[0] = avctx->coded_width; /* XXX: 8-bit per sample only */
-    vaapi_set_frame_surface(avctx, frame, s);
+    vaapi_get_buffer_common(avctx, frame, s);
     return 0;
 }
 
@@ -410,6 +447,7 @@ vaapi_release_buffer(AVCodecContext *avctx, AVFrame *frame)
     if (s && vaapi_release_surface(dec, s) != 0)
         return;
 }
+#endif
 
 // Initializes AVCodecContext for VA-API decoding purposes
 static void
@@ -423,9 +461,13 @@ vaapi_init_context(FFVADecoder *dec)
     avctx->slice_flags = SLICE_FLAG_CODED_ORDER|SLICE_FLAG_ALLOW_FIELD;
 
     avctx->get_format = vaapi_get_format;
+#if AV_FEATURE_AVFRAME_REF
+    avctx->get_buffer2 = vaapi_get_buffer2;
+#else
     avctx->get_buffer = vaapi_get_buffer;
     avctx->reget_buffer = vaapi_reget_buffer;
     avctx->release_buffer = vaapi_release_buffer;
+#endif
 }
 
 // Initializes decoder for VA-API purposes, e.g. creates the VA display
