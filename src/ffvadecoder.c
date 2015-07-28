@@ -316,7 +316,7 @@ vaapi_get_format(AVCodecContext *avctx, const enum AVPixelFormat *pix_fmts)
 
     // Find a VA format
     for (i = 0; pix_fmts[i] != AV_PIX_FMT_NONE; i++) {
-        if (pix_fmts[i] == AV_PIX_FMT_VAAPI_VLD)
+        if (pix_fmts[i] == AV_PIX_FMT_VAAPI)
             break;
     }
     if (pix_fmts[i] == AV_PIX_FMT_NONE)
@@ -361,7 +361,7 @@ vaapi_get_format(AVCodecContext *avctx, const enum AVPixelFormat *pix_fmts)
         return AV_PIX_FMT_NONE;
     if (vaapi_init_decoder(dec, profiles[i], VAEntrypointVLD) < 0)
         return AV_PIX_FMT_NONE;
-    return AV_PIX_FMT_VAAPI_VLD;
+    return AV_PIX_FMT_VAAPI;
 }
 
 // Common initialization of AVFrame fields for VA-API purposes
