@@ -338,6 +338,8 @@ vaapi_get_format(AVCodecContext *avctx, const enum AVPixelFormat *pix_fmts)
     case VAProfileMPEG4AdvancedSimple:
         profiles[num_profiles++] = VAProfileMPEG4Main;
         break;
+    case VAProfileH264Baseline:
+        // fall-through
     case VAProfileH264ConstrainedBaseline:
         profiles[num_profiles++] = VAProfileH264Main;
         // fall-through
