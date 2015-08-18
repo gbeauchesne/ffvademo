@@ -47,7 +47,9 @@ struct ffva_decoder_s {
     AVFrame *frame;
 
     FFVADisplay *display;
-    struct vaapi_context va_context;
+    VADisplay va_display;
+    VAConfigID va_config;
+    VAContextID va_context;
     VAProfile *va_profiles;
     uint32_t num_va_profiles;
     FFVASurface *va_surfaces;
@@ -69,7 +71,6 @@ struct ffva_decoder_s {
 static int
 vaapi_ensure_profiles(FFVADecoder *dec)
 {
-    struct vaapi_context * const vactx = &dec->va_context;
     VAProfile *profiles;
     int num_profiles;
     VAStatus va_status;
@@ -77,12 +78,12 @@ vaapi_ensure_profiles(FFVADecoder *dec)
     if (dec->va_profiles && dec->num_va_profiles > 0)
         return 0;
 
-    num_profiles = vaMaxNumProfiles(vactx->display);
+    num_profiles = vaMaxNumProfiles(dec->va_display);
     profiles = malloc(num_profiles * sizeof(*profiles));
     if (!profiles)
         return AVERROR(ENOMEM);
 
-    va_status = vaQueryConfigProfiles(vactx->display, profiles, &num_profiles);
+    va_status = vaQueryConfigProfiles(dec->va_display, profiles, &num_profiles);
     if (!va_check_status(va_status, "vaQueryConfigProfiles()"))
         goto error_query_profiles;
 
@@ -198,18 +199,18 @@ static int
 vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
 {
     AVCodecContext * const avctx = dec->avctx;
-    struct vaapi_context * const vactx = &dec->va_context;
     VAConfigID va_config = VA_INVALID_ID;
     VAContextID va_context = VA_INVALID_ID;
     VAConfigAttrib va_attribs[1], *va_attrib;
     uint32_t i, num_va_attribs = 0;
     VASurfaceID *va_surfaces = NULL;
     VAStatus va_status;
+    AVDictionary *params = NULL;
     int ret;
 
     va_attrib = &va_attribs[num_va_attribs++];
     va_attrib->type = VAConfigAttribRTFormat;
-    va_status = vaGetConfigAttributes(vactx->display, profile, entrypoint,
+    va_status = vaGetConfigAttributes(dec->va_display, profile, entrypoint,
         va_attribs, num_va_attribs);
     if (!va_check_status(va_status, "vaGetConfigAttributes()"))
         return vaapi_to_ffmpeg_error(va_status);
@@ -220,7 +221,7 @@ vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
         goto error_unsupported_chroma_format;
     va_attrib->value = VA_RT_FORMAT_YUV420;
 
-    va_status = vaCreateConfig(vactx->display, profile, entrypoint,
+    va_status = vaCreateConfig(dec->va_display, profile, entrypoint,
         va_attribs, num_va_attribs, &va_config);
     if (!va_check_status(va_status, "vaCreateConfig()"))
         return vaapi_to_ffmpeg_error(va_status);
@@ -234,7 +235,7 @@ vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
     if (!va_surfaces)
         goto error_cleanup;
 
-    va_status = vaCreateSurfaces(vactx->display,
+    va_status = vaCreateSurfaces(dec->va_display,
         avctx->coded_width, avctx->coded_height, VA_RT_FORMAT_YUV420,
         dec->num_va_surfaces, va_surfaces);
     if (!va_check_status(va_status, "vaCreateSurfaces()"))
@@ -249,24 +250,30 @@ vaapi_init_decoder(FFVADecoder *dec, VAProfile profile, VAEntrypoint entrypoint)
     dec->va_surfaces_queue_head = 0;
     dec->va_surfaces_queue_tail = 0;
 
-    va_status = vaCreateContext(vactx->display, va_config,
+    va_status = vaCreateContext(dec->va_display, va_config,
         avctx->coded_width, avctx->coded_height, VA_PROGRESSIVE,
         va_surfaces, dec->num_va_surfaces, &va_context);
     if (!va_check_status(va_status, "vaCreateContext()"))
         goto error_cleanup;
 
-    vactx->config_id = va_config;
-    vactx->context_id = va_context;
+    dec->va_config = va_config;
+    dec->va_context = va_context;
     free(va_surfaces);
-    return 0;
+
+    av_dict_set_int(&params,
+        AV_VAAPI_PIPELINE_PARAM_CONTEXT, dec->va_context, 0);
+
+    ret = av_vaapi_set_pipeline_params(avctx, dec->va_display, 0, &params);
+    av_dict_free(&params);
+    return ret;
 
     /* ERRORS */
 error_unsupported_chroma_format:
     av_log(dec, AV_LOG_ERROR, "unsupported YUV 4:2:0 chroma format\n");
     return AVERROR(ENOTSUP);
 error_cleanup:
-    va_destroy_context(vactx->display, &va_context);
-    va_destroy_config(vactx->display, &va_config);
+    va_destroy_context(dec->va_display, &va_context);
+    va_destroy_config(dec->va_display, &va_config);
     if (ret == 0)
         ret = vaapi_to_ffmpeg_error(va_status);
     free(va_surfaces);
@@ -470,31 +477,18 @@ vaapi_init_context(FFVADecoder *dec)
 #endif
 }
 
-// Initializes decoder for VA-API purposes, e.g. creates the VA display
-static void
-vaapi_init(FFVADecoder *dec)
-{
-    struct vaapi_context * const vactx = &dec->va_context;
-
-    memset(vactx, 0, sizeof(*vactx));
-    vactx->config_id = VA_INVALID_ID;
-    vactx->context_id = VA_INVALID_ID;
-    vactx->display = dec->display->va_display;
-}
-
 // Destroys all VA-API related resources
 static void
 vaapi_finalize(FFVADecoder *dec)
 {
-    struct vaapi_context * const vactx = &dec->va_context;
     uint32_t i;
 
-    if (vactx->display) {
-        va_destroy_context(vactx->display, &vactx->context_id);
-        va_destroy_config(vactx->display, &vactx->config_id);
+    if (dec->va_display) {
+        va_destroy_context(dec->va_display, &dec->va_context);
+        va_destroy_config(dec->va_display, &dec->va_config);
         if (dec->va_surfaces) {
             for (i = 0; i < dec->num_va_surfaces; i++)
-                va_destroy_surface(vactx->display, &dec->va_surfaces[i].id);
+                va_destroy_surface(dec->va_display, &dec->va_surfaces[i].id);
         }
     }
     free(dec->va_surfaces);
@@ -536,7 +530,9 @@ decoder_init(FFVADecoder *dec, FFVADisplay *display)
     av_register_all();
 
     dec->display = display;
-    vaapi_init(dec);
+    dec->va_display = display->va_display;
+    dec->va_config = VA_INVALID_ID;
+    dec->va_context = VA_INVALID_ID;
     dec->state = STATE_INITIALIZED;
     return 0;
 }
