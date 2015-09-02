@@ -68,6 +68,7 @@ ffmpeg_to_vaapi_profile(enum AVCodecID ff_codec, int ff_profile,
             DEFINE_PROFILE(H264, HIGH, High);
         }
         break;
+    case AV_CODEC_ID_WMV3:
     case AV_CODEC_ID_VC1:
         switch (ff_profile) {
             DEFINE_PROFILE(VC1, SIMPLE, Simple);
