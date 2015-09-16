@@ -18,15 +18,11 @@ endif
 libffva_cflags = \
 	$(FFMPEG_CFLAGS)	\
 	$(LIBVA_CFLAGS)		\
-	$(LIBVA_X11_CFLAGS)	\
-	$(X11_CFLAGS)		\
 	$(NULL)
 
 libffva_libs = \
 	$(FFMPEG_LIBS)		\
 	$(LIBVA_LIBS)		\
-	$(LIBVA_X11_LIBS)	\
-	$(X11_LIBS)		\
 	-lpthread		\
 	$(NULL)
 
@@ -36,7 +32,6 @@ libffva_source_c = \
 	ffvadisplay.c		\
 	ffvafilter.c		\
 	ffvarenderer.c		\
-	ffvarenderer_x11.c	\
 	ffvasurface.c		\
 	vaapi_utils.c		\
 	$(NULL)
@@ -51,14 +46,22 @@ libffva_source_h = \
 	ffvafilter.h		\
 	ffvarenderer.h		\
 	ffvarenderer_priv.h	\
-	ffvarenderer_x11.h	\
 	ffvasurface.h		\
 	vaapi_compat.h		\
 	vaapi_utils.h		\
 	$(NULL)
 
+libffva_source_x11_c = ffvarenderer_x11.c
+libffva_source_x11_h = ffvarenderer_x11.h
 libffva_source_egl_c = ffvarenderer_egl.c
 libffva_source_egl_h = ffvarenderer_egl.h
+
+if USE_X11
+libffva_source_c		+= $(libffva_source_x11_c)
+libffva_source_h		+= $(libffva_source_x11_h)
+libffva_cflags			+= $(LIBVA_X11_CFLAGS) $(X11_CFLAGS)
+libffva_libs			+= $(LIBVA_X11_LIBS) $(X11_LIBS)
+endif
 
 if USE_EGL
 libffva_source_c		+= $(libffva_source_egl_c)
@@ -79,6 +82,8 @@ ffvademo_LDADD			= libffva.la
 EXTRA_DIST = \
 	$(libffva_source_c)	\
 	$(libffva_source_h)	\
+	$(libffva_source_x11_c)	\
+	$(libffva_source_x11_h)	\
 	$(libffva_source_egl_c)	\
 	$(libffva_source_egl_h)	\
 	$(NULL)
