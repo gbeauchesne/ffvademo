@@ -33,6 +33,9 @@
 #include "ffmpeg_utils.h"
 #include "vaapi_utils.h"
 
+#if USE_DRM
+# include "ffvarenderer_drm.h"
+#endif
 #if USE_X11
 # include "ffvarenderer_x11.h"
 #endif
@@ -45,7 +48,15 @@
 #define DEFAULT_HEIGHT 480
 
 // Default renderer
+#if USE_DRM
+#define DEFAULT_RENDERER FFVA_RENDERER_TYPE_DRM
+#endif
+#if USE_X11
 #define DEFAULT_RENDERER FFVA_RENDERER_TYPE_X11
+#endif
+#ifndef DEFAULT_RENDERER
+#define DEFAULT_RENDERER FFVA_RENDERER_TYPE_EGL
+#endif
 
 // Default memory type
 #define DEFAULT_MEM_TYPE MEM_TYPE_DMA_BUF
@@ -93,6 +104,8 @@ static const AVOption app_options[] = {
     { "renderer", "renderer type to use", OFFSET(renderer_type),
       AV_OPT_TYPE_FLAGS, { .i64 = DEFAULT_RENDERER }, 0, INT_MAX, 0,
       "renderer" },
+    { "drm", "DRM", 0, AV_OPT_TYPE_CONST, { .i64 = FFVA_RENDERER_TYPE_DRM },
+      0, 0, 0, "renderer" },
     { "x11", "X11", 0, AV_OPT_TYPE_CONST, { .i64 = FFVA_RENDERER_TYPE_X11 },
       0, 0, 0, "renderer" },
     { "egl", "EGL", 0, AV_OPT_TYPE_CONST, { .i64 = FFVA_RENDERER_TYPE_EGL },
@@ -300,6 +313,11 @@ app_ensure_renderer(App *app)
 
     if (!app->renderer) {
         switch (options->renderer_type) {
+#if USE_DRM
+        case FFVA_RENDERER_TYPE_DRM:
+            app->renderer = ffva_renderer_drm_new(app->display, flags);
+            break;
+#endif
 #if USE_X11
         case FFVA_RENDERER_TYPE_X11:
             app->renderer = ffva_renderer_x11_new(app->display, flags);

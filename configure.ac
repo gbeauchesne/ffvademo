@@ -117,11 +117,28 @@ case "$FFVA_RENDERER" in
     egl)        FFVA_RENDERER="${FFVA_RENDERER}_${DEFAULT_RENDERER}";;
 esac
 case "$FFVA_RENDERER" in
+    drm)        FFVA_RENDERER_NAME="DRM";;
     x11)        FFVA_RENDERER_NAME="X11";;
     egl_x11)    FFVA_RENDERER_NAME="EGL/X11";;
     *) AC_MSG_ERROR([Unsupported renderer $FFVA_RENDERER]);;
 esac
 AC_SUBST([FFVA_RENDERER])
+
+dnl Check for DRM
+USE_DRM=0
+case "$FFVA_RENDERER" in
+(*drm*)
+    PKG_CHECK_MODULES([DRM], [libdrm])
+    saved_CPPFLAGS="$CPPFLAGS"
+    CPPFLAGS="$CPPFLAGS $DRM_CFLAGS"
+    AC_CHECK_HEADERS([xf86drm.h],
+        [USE_DRM=1], [AC_MSG_ERROR([incomplete libdrm-dev (headers) package])])
+    CPPFLAGS="$saved_CPPFLAGS"
+    ;;
+esac
+AC_DEFINE_UNQUOTED([USE_DRM], [$USE_DRM],
+    [Defined to 1 if DRM renderer is enabled])
+AM_CONDITIONAL([USE_DRM], [test $USE_DRM -eq 1])
 
 dnl Check for X11
 USE_X11=0
@@ -250,6 +267,20 @@ VA_MAJOR_VERSION=`echo "$VA_VERSION" | cut -d'.' -f1`
 VA_MINOR_VERSION=`echo "$VA_VERSION" | cut -d'.' -f2`
 VA_MICRO_VERSION=`echo "$VA_VERSION" | cut -d'.' -f3`
 VA_VERSION_STR="$VA_VERSION"
+
+dnl VA/DRM API
+USE_VA_DRM=0
+if test $USE_DRM -eq 1; then
+    PKG_CHECK_MODULES([LIBVA_DRM], [libva-drm >= va_api_drm_version])
+    saved_CPPFLAGS="$CPPFLAGS"
+    CPPFLAGS="$LIBVA_DRM_CFLAGS"
+    AC_CHECK_HEADERS([va/va_drm.h], [USE_VA_DRM=1],
+        [AC_MSG_ERROR([incomplete libva-dev (headers) package])])
+    CPPFLAGS="$saved_CPPFLAGS"
+fi
+AC_DEFINE_UNQUOTED([USE_VA_DRM], [$USE_VA_DRM],
+    [Defined to 1 if libva (DRM) backend is enabled])
+AM_CONDITIONAL([USE_VA_DRM], [test $USE_VA_DRM -eq 1])
 
 dnl VA/X11 API
 USE_VA_X11=0

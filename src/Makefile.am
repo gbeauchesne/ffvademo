@@ -51,10 +51,19 @@ libffva_source_h = \
 	vaapi_utils.h		\
 	$(NULL)
 
+libffva_source_drm_c = ffvarenderer_drm.c
+libffva_source_drm_h = ffvarenderer_drm.h
 libffva_source_x11_c = ffvarenderer_x11.c
 libffva_source_x11_h = ffvarenderer_x11.h
 libffva_source_egl_c = ffvarenderer_egl.c
 libffva_source_egl_h = ffvarenderer_egl.h
+
+if USE_DRM
+libffva_source_c		+= $(libffva_source_drm_c)
+libffva_source_h		+= $(libffva_source_drm_h)
+libffva_cflags			+= $(LIBVA_DRM_CFLAGS) $(DRM_CFLAGS)
+libffva_libs			+= $(LIBVA_DRM_LIBS) $(DRM_LIBS)
+endif
 
 if USE_X11
 libffva_source_c		+= $(libffva_source_x11_c)
@@ -82,6 +91,8 @@ ffvademo_LDADD			= libffva.la
 EXTRA_DIST = \
 	$(libffva_source_c)	\
 	$(libffva_source_h)	\
+	$(libffva_source_drm_c)	\
+	$(libffva_source_drm_h)	\
 	$(libffva_source_x11_c)	\
 	$(libffva_source_x11_h)	\
 	$(libffva_source_egl_c)	\

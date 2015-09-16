@@ -29,6 +29,7 @@ typedef struct ffva_display_s           FFVADisplay;
 
 typedef enum {
     FFVA_DISPLAY_TYPE_X11 = 1,
+    FFVA_DISPLAY_TYPE_DRM,
 } FFVADisplayType;
 
 /** Creates a new display object and opens a connection to the native display */

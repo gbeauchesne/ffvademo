@@ -38,6 +38,90 @@ typedef struct {
 } FFVADisplayClass;
 
 /* ------------------------------------------------------------------------ */
+/* --- DRM Display                                                      --- */
+/* ------------------------------------------------------------------------ */
+
+#if USE_VA_DRM
+#include <va/va_drm.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+/* Define the max number of device nodes to try */
+#define MAX_DRM_DEVICES 4
+
+typedef struct {
+    FFVADisplay base;
+} FFVADisplayDRM;
+
+static bool
+ffva_display_drm_open(FFVADisplayDRM *display)
+{
+    FFVADisplay * const base_display = (FFVADisplay*)display;
+    char device_name[PATH_MAX];
+    int i, fd = -1;
+    int ret;
+
+    base_display->native_display = (void *)(intptr_t)fd;
+
+    /* Try render nodes first, i.e. /dev/dri/renderD<nnn> then try to
+       fallback to older gfx device nodes */
+    for (i = 0; i < 2*MAX_DRM_DEVICES; i++) {
+        const int dn = i >> 1;
+        const int rn = !(i & 1);
+
+        ret = snprintf(device_name, sizeof(device_name),
+            "/dev/dri/%s%d", rn ? "renderD" : "card", dn + rn*0x80);
+        if (ret < 0 || ret >= sizeof(device_name))
+            return AVERROR(ENAMETOOLONG);
+
+        fd = open(device_name, O_RDWR|O_CLOEXEC);
+        if (fd >= 0)
+            break;
+    }
+    if (fd < 0)
+        goto error_find_device;
+    base_display->native_display = (void *)(intptr_t)fd;
+
+    base_display->va_display = vaGetDisplayDRM(fd);
+    return true;
+
+    /* ERRORS */
+error_find_device:
+    av_log(display, AV_LOG_ERROR, "failed to find DRM device\n");
+    return false;
+}
+
+static void
+ffva_display_drm_close(FFVADisplayDRM *display)
+{
+    FFVADisplay * const base_display = (FFVADisplay*)display;
+    int fd;
+
+    fd = (intptr_t)base_display->native_display;
+    if (fd >= 0)
+        close(fd);
+}
+
+static const FFVADisplayClass *
+ffva_display_drm_class(void)
+{
+    static const FFVADisplayClass g_class = {
+        .base = {
+            .class_name = "FFVADisplayDRM",
+            .item_name  = av_default_item_name,
+            .option     = NULL,
+            .version    = LIBAVUTIL_VERSION_INT,
+        },
+        .size           = sizeof(FFVADisplayDRM),
+        .type           = FFVA_DISPLAY_TYPE_DRM,
+        .open           = (FFVADisplayOpenFunc)ffva_display_drm_open,
+        .close          = (FFVADisplayCloseFunc)ffva_display_drm_close,
+    };
+    return &g_class;
+}
+#endif
+
+/* ------------------------------------------------------------------------ */
 /* --- X11 Display                                                      --- */
 /* ------------------------------------------------------------------------ */
 
@@ -102,6 +186,9 @@ ffva_display_x11_class(void)
 static inline const FFVADisplayClass *
 ffva_display_class(void)
 {
+#if USE_VA_DRM
+    return ffva_display_drm_class();
+#endif
 #if USE_VA_X11
     return ffva_display_x11_class();
 #endif
