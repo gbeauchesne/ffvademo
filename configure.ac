@@ -83,6 +83,7 @@ dnl Check for tools
 AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_CXX
+PKG_PROG_PKG_CONFIG
 
 AC_ARG_VAR([YASM], [Path to yasm program, if any])
 AC_PATH_PROG([YASM], [yasm])
