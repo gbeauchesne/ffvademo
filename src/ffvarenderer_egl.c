@@ -47,7 +47,17 @@
 #define EGL_image_dma_buf_import_owns_fd 0
 #endif
 
-#if USE_GLES_VERSION != 0
+/* Additional DRM formats */
+#ifndef DRM_FORMAT_R8
+#define DRM_FORMAT_R8   fourcc_code('R', '8', ' ', ' ')
+#endif
+#ifndef DRM_FORMAT_RG88
+#define DRM_FORMAT_RG88 fourcc_code('R', 'G', '8', '8')
+#endif
+#ifndef DRM_FORMAT_GR88
+#define DRM_FORMAT_GR88 fourcc_code('G', 'R', '8', '8')
+#endif
+
 static bool
 va_format_to_drm_format(const VAImageFormat *va_format, uint32_t *format_ptr)
 {
@@ -94,7 +104,6 @@ va_format_to_drm_format(const VAImageFormat *va_format, uint32_t *format_ptr)
         *format_ptr = format;
     return true;
 }
-#endif
 
 static uint32_t
 get_va_mem_type(uint32_t flags)
@@ -895,10 +904,9 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
     EGLImageKHR image;
     GLint attribs[23], *attrib;
     uint32_t i, num_fds = 0;
-    GLenum gl_format;
+    uint32_t drm_format;
     int fds[3];
 #if USE_GLES_VERSION != 0
-    uint32_t drm_format;
 
     if (va_format_to_drm_format(&va_image->format, &drm_format)) {
         attrib = attribs;
@@ -948,14 +956,13 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
     }
 
     switch (va_image->format.fourcc) {
-#ifdef EGL_IMAGE_INTERNAL_FORMAT_EXT
     case VA_FOURCC('N','V','1','2'): {
         for (i = 0; i < va_image->num_planes; i++) {
             const uint32_t is_uv_plane = i > 0;
 
             attrib = attribs;
-            *attrib++ = EGL_IMAGE_INTERNAL_FORMAT_EXT;
-            *attrib++ = is_uv_plane ? GL_RG8 : GL_R8;
+            *attrib++ = EGL_LINUX_DRM_FOURCC_EXT;
+            *attrib++ = is_uv_plane ? DRM_FORMAT_GR88 : DRM_FORMAT_R8;
             *attrib++ = EGL_WIDTH;
             *attrib++ = (va_image->width + is_uv_plane) >> is_uv_plane;
             *attrib++ = EGL_HEIGHT;
@@ -991,8 +998,8 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
             const uint32_t p = i ^ (3 & -(is_uv_plane & swap_uv_planes));
 
             attrib = attribs;
-            *attrib++ = EGL_IMAGE_INTERNAL_FORMAT_EXT;
-            *attrib++ = GL_R8;
+            *attrib++ = EGL_LINUX_DRM_FOURCC_EXT;
+            *attrib++ = DRM_FORMAT_R8;
             *attrib++ = EGL_WIDTH;
             *attrib++ = (va_image->width + is_uv_plane) >> is_uv_plane;
             *attrib++ = EGL_HEIGHT;
@@ -1020,15 +1027,13 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
         break;
     }
     case VA_FOURCC('R','G','B','A'):
-        gl_format = GL_RGBA;
-        goto bind_rgb_formats;
-    case VA_FOURCC('B','G','R','A'):
-        gl_format = GL_BGRA_EXT;
-        // fall-through
-    bind_rgb_formats: {
+    case VA_FOURCC('B','G','R','A'): {
+        if (!va_format_to_drm_format(&va_image->format, &drm_format))
+            goto error_unsupported_format;
+
         attrib = attribs;
-        *attrib++ = EGL_IMAGE_INTERNAL_FORMAT_EXT;
-        *attrib++ = gl_format;
+        *attrib++ = EGL_LINUX_DRM_FOURCC_EXT;
+        *attrib++ = drm_format;
         *attrib++ = EGL_WIDTH;
         *attrib++ = va_image->width;
         *attrib++ = EGL_HEIGHT;
@@ -1052,7 +1057,6 @@ renderer_bind_dma_buf(FFVARendererEGL *rnd)
         renderer_set_shader_text(rnd, frag_shader_text_rgba, NULL);
         break;
     }
-#endif
     default:
         goto error_unsupported_format;
     }
